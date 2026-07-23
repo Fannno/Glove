@@ -10,9 +10,22 @@
 		D7EEA7592F6714330089238C /* Glove.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Glove.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		D7EF995A30124309009ADA67 /* Exceptions for "Glove" folder in "Glove" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = D7EEA7582F6714330089238C /* Glove */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		D7EEA75B2F6714330089238C /* Glove */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				D7EF995A30124309009ADA67 /* Exceptions for "Glove" folder in "Glove" target */,
+			);
 			path = Glove;
 			sourceTree = "<group>";
 		};
@@ -254,6 +267,9 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Glove/Info.plist;
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "我們需要使用您的麥克風來進行語音留言輸入。";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "我們需要使用語音辨識功能將您的語音轉換為文字便利貼。";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
@@ -298,6 +314,9 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Glove/Info.plist;
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "我們需要使用您的麥克風來進行語音留言輸入。";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "我們需要使用語音辨識功能將您的語音轉換為文字便利貼。";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
