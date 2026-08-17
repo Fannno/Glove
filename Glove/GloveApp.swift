@@ -31,11 +31,12 @@ struct RootView: View {
     @StateObject private var loginVM = LoginViewModel()
     @StateObject private var dataVM = DataViewModel()
     @StateObject private var medVM = MedicationViewModel()
+    @StateObject private var bleVM = BluetoothViewModel()
 
     var body: some View {
         Group {
             if loginVM.isAuthenticated {
-                NavigationBarView(loginVM: loginVM,dataVM:dataVM,medVM:medVM)
+                NavigationBarView(loginVM: loginVM, dataVM: dataVM, medVM: medVM, bleVM: bleVM)
             } else {
                 LoginView(loginVM: loginVM)
             }
