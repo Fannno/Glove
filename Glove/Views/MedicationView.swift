@@ -186,7 +186,7 @@ struct MedicationView: View {
                 Text("服藥紀錄").tag(1)
                 Text("生理健康").tag(2)
                 Text("表徵紀錄").tag(3)
-                Text("藥效波動").tag(4)
+                Text("用藥對照").tag(4)
             }
             .pickerStyle(.segmented)
             .padding(.horizontal)
@@ -1269,7 +1269,7 @@ struct MedicationView: View {
     private var analyticsTabView: some View {
         ScrollView {
             VStack(spacing: 16) {
-                AnalyticsTabView(medVM: medVM, dataVM: dataVM, selectedDate: filterDate)
+                AnalyticsTabView(medVM: medVM, dataVM: dataVM, selectedDate: $filterDate)
             }
             .padding()
             .padding(.bottom, 90)
