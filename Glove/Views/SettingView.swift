@@ -319,19 +319,38 @@ struct SettingView: View {
                     Text("抑震控制模式")
                         .font(.system(size: 15, weight: .bold))
                         .foregroundColor(AppTheme.textPrimary(for: colorScheme))
-                    Text(bleVM.isAutomaticSuppressionEnabled ? "開啟自動抑震功能" : "暫停自動抑震功能，可進入初始化視窗進行調整")
+                    Text(
+                        bleVM.isAutomaticModeCommandPending
+                            ? "模式切換中，等待藍牙寫入確認"
+                            : (bleVM.isAutomaticSuppressionEnabled
+                                ? "開啟自動抑震功能"
+                                : "暫停自動抑震功能，可進入初始化視窗進行調整")
+                    )
                         .font(.system(size: 12))
                         .foregroundColor(AppTheme.textSecondary(for: colorScheme))
                 }
 
                 Spacer()
 
-                Text(bleVM.isAutomaticSuppressionEnabled ? "AUTO" : "MANUAL")
+                Text(
+                    bleVM.isAutomaticModeCommandPending
+                        ? "WAIT"
+                        : (bleVM.isAutomaticSuppressionEnabled ? "AUTO" : "MANUAL")
+                )
                     .font(.system(size: 12, weight: .bold))
-                    .foregroundColor(bleVM.isAutomaticSuppressionEnabled ? .green : AppTheme.accent(for: colorScheme))
+                    .foregroundColor(
+                        bleVM.isAutomaticModeCommandPending
+                            ? AppTheme.textSecondary(for: colorScheme)
+                            : (bleVM.isAutomaticSuppressionEnabled ? .green : AppTheme.accent(for: colorScheme))
+                    )
                     .padding(.horizontal, 10)
                     .padding(.vertical, 6)
-                    .background((bleVM.isAutomaticSuppressionEnabled ? Color.green : AppTheme.accent(for: colorScheme)).opacity(0.12))
+                    .background(
+                        (bleVM.isAutomaticModeCommandPending
+                            ? AppTheme.textSecondary(for: colorScheme)
+                            : (bleVM.isAutomaticSuppressionEnabled ? Color.green : AppTheme.accent(for: colorScheme)))
+                            .opacity(0.12)
+                    )
                     .clipShape(Capsule())
             }
 
@@ -339,16 +358,35 @@ struct SettingView: View {
                 bleVM.setAutomaticSuppression(!bleVM.isAutomaticSuppressionEnabled)
             }) {
                 HStack(spacing: 8) {
-                    Image(systemName: bleVM.isAutomaticSuppressionEnabled ? "pause.circle.fill" : "play.circle.fill")
-                    Text(bleVM.isAutomaticSuppressionEnabled ? "暫停自動抑震並進入微調" : "啟用自動抑震")
+                    if bleVM.isAutomaticModeCommandPending {
+                        ProgressView()
+                            .tint(.white)
+                    } else {
+                        Image(systemName: bleVM.isAutomaticSuppressionEnabled ? "pause.circle.fill" : "play.circle.fill")
+                    }
+
+                    Text(
+                        bleVM.isAutomaticModeCommandPending
+                            ? "模式切換中..."
+                            : (bleVM.isAutomaticSuppressionEnabled
+                                ? "暫停自動抑震並進入微調"
+                                : "啟用自動抑震")
+                    )
                         .font(.system(size: 14, weight: .bold))
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 12)
                 .foregroundColor(.white)
-                .background(bleVM.isAutomaticSuppressionEnabled ? AppTheme.accent(for: colorScheme) : AppTheme.primary(for: colorScheme))
+                .background(
+                    bleVM.isAutomaticModeCommandPending
+                        ? AppTheme.textSecondary(for: colorScheme)
+                        : (bleVM.isAutomaticSuppressionEnabled
+                            ? AppTheme.accent(for: colorScheme)
+                            : AppTheme.primary(for: colorScheme))
+                )
                 .cornerRadius(12)
             }
+            .disabled(bleVM.isAutomaticModeCommandPending)
         }
         .padding(16)
         .background(AppTheme.cardBackground(for: colorScheme))

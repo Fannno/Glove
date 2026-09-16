@@ -8,6 +8,11 @@ struct GloveInitializationSheet: View {
     /// 初始化收緊量（cm）
     @State private var calibrationTakeUpCm: Double = BluetoothViewModel.initialTakeUpDefaultCm
     @State private var isAdjusting: Bool = false
+    @State private var isFinishingInitialization: Bool = false
+
+    private var controlsLocked: Bool {
+        isAdjusting || bleVM.isInitializationSequencePending
+    }
 
     var body: some View {
         NavigationStack {
@@ -25,7 +30,7 @@ struct GloveInitializationSheet: View {
                                 .foregroundColor(AppTheme.textPrimary(for: colorScheme))
                         }
 
-                        Text("進入此畫面後會先暫停自動抑震。請戴妥手套並保持手指自然放鬆，再用下方 Slider 調整初始收緊量，最多 14 cm。放開 Slider 後，手套會自動將馬達移動到指定位置。")
+                        Text("進入此畫面後會先暫停自動抑震。請戴妥手套並保持手指自然放鬆，再用下方滑桿調整初始收緊量，最多 14 cm。放開滑桿後，手套會自動微調至指定位置。")
                             .font(.system(size: 13))
                             .foregroundColor(AppTheme.textSecondary(for: colorScheme))
                             .lineSpacing(4)
@@ -54,11 +59,12 @@ struct GloveInitializationSheet: View {
                             onEditingChanged: { editing in
                                 isAdjusting = editing
                                 if !editing {
-                                    bleVM.sendInitialTakeUpCm(calibrationTakeUpCm)
+                                    _ = bleVM.sendInitialTakeUpCm(calibrationTakeUpCm)
                                 }
                             }
                         )
                         .accentColor(AppTheme.primary(for: colorScheme))
+                        .disabled(bleVM.isInitializationSequencePending)
 
                         HStack {
                             Text("0 cm")
@@ -81,10 +87,11 @@ struct GloveInitializationSheet: View {
                     .shadow(color: Color.black.opacity(0.04), radius: 8, y: 3)
 
                     VStack(alignment: .leading, spacing: 7) {
-                        Text("目前模式：MANUAL 微調")
+                        Text(statusTitle)
                             .font(.system(size: 13, weight: .bold))
                             .foregroundColor(AppTheme.accent(for: colorScheme))
-                        Text("按下「完成並啟用自動抑震」後才會送出 AUTO 指令。若目前馬達正在回位或執行上一筆調整，手套 會先完成安全動作，再使用這個基準長度進入自動模式。")
+
+                        Text(statusDescription)
                             .font(.system(size: 11.5))
                             .foregroundColor(AppTheme.textSecondary(for: colorScheme))
                             .lineSpacing(3)
@@ -100,10 +107,20 @@ struct GloveInitializationSheet: View {
                         confirmComfortablePosition()
                     }) {
                         HStack(spacing: 8) {
-                            Image(systemName: "checkmark.circle.fill")
-                                .font(.system(size: 16, weight: .semibold))
-                            Text("完成並啟用自動抑震")
-                                .font(.system(size: 16, weight: .bold))
+                            if bleVM.isInitializationSequencePending {
+                                ProgressView()
+                                    .tint(.white)
+                            } else {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .font(.system(size: 16, weight: .semibold))
+                            }
+
+                            Text(
+                                bleVM.isInitializationSequencePending
+                                    ? "正在套用設定並啟用 AUTO..."
+                                    : "完成並啟用自動抑震"
+                            )
+                            .font(.system(size: 16, weight: .bold))
                         }
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 16)
@@ -112,8 +129,8 @@ struct GloveInitializationSheet: View {
                         .cornerRadius(14)
                         .shadow(color: AppTheme.primary(for: colorScheme).opacity(0.3), radius: 8, y: 4)
                     }
-                    .disabled(isAdjusting)
-                    .opacity(isAdjusting ? 0.6 : 1.0)
+                    .disabled(controlsLocked)
+                    .opacity(controlsLocked ? 0.65 : 1.0)
                 }
                 .padding(.horizontal, 22)
                 .padding(.top, 16)
@@ -124,27 +141,84 @@ struct GloveInitializationSheet: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("取消") {
-                        // 取消時維持 MANUAL，避免尚未確認的長度直接進入自動抑震。
+                        bleVM.cancelInitialCalibrationSequence()
+                        bleVM.setAutomaticSuppression(false)
                         dismiss()
                     }
+                    .disabled(bleVM.isInitializationSequencePending)
                     .foregroundColor(AppTheme.textSecondary(for: colorScheme))
                 }
             }
             .onAppear {
+                bleVM.resetInitializationSequenceFeedback()
                 calibrationTakeUpCm = min(
                     max(bleVM.initialTakeUpCm, BluetoothViewModel.initialTakeUpMinCm),
                     BluetoothViewModel.initialTakeUpMaxCm
                 )
-                // 進入初始化畫面時立刻停止自動 Gate 控制權。
                 bleVM.setAutomaticSuppression(false)
+            }
+            .onChange(of: bleVM.initializationSequenceSucceeded) { _, succeeded in
+                guard succeeded, isFinishingInitialization else { return }
+                isFinishingInitialization = false
+                dismiss()
+            }
+            .alert(
+                "初始化未完成",
+                isPresented: Binding(
+                    get: { bleVM.initializationSequenceErrorMessage != nil },
+                    set: { newValue in
+                        if !newValue {
+                            bleVM.clearInitializationSequenceError()
+                        }
+                    }
+                )
+            ) {
+                Button("確定", role: .cancel) {
+                    bleVM.clearInitializationSequenceError()
+                    isFinishingInitialization = false
+                }
+            } message: {
+                Text(bleVM.initializationSequenceErrorMessage ?? "未知錯誤")
             }
         }
     }
 
-    /// 將目前 Slider 值再次送出，並切回 AUTO。
+    private var statusTitle: String {
+        if bleVM.isInitializationSequencePending {
+            if bleVM.isInitialLengthCommandPending {
+                return "正在確認手套鬆緊度"
+            }
+            if bleVM.isAutomaticModeCommandPending {
+                return "正在切換至 AUTO 模式"
+            }
+            return "正在完成初始化"
+        }
+
+        if bleVM.isInitialLengthCommandPending {
+            return "正在套用長度設定"
+        }
+
+        return "目前模式：MANUAL 微調"
+    }
+
+    private var statusDescription: String {
+        if bleVM.isInitializationSequencePending {
+            return "系統正在確認手套的初始位置設定，確認完成後將自動切換至 AUTO 模式，請稍候。"
+        }
+
+        if bleVM.isInitialLengthCommandPending {
+            return "手套正在調整至指定鬆緊度，請保持放鬆稍候片刻。"
+        }
+
+        return "調整滑桿時維持 MANUAL 模式。調整至舒適位置後，點擊下方按鈕即可完成校準並切換至 AUTO 模式。"
+    }
+
     private func confirmComfortablePosition() {
-        bleVM.sendInitialTakeUpCm(calibrationTakeUpCm)
-        bleVM.setAutomaticSuppression(true)
-        dismiss()
+        isFinishingInitialization = true
+        let started = bleVM.confirmInitialTakeUpAndEnableAuto(calibrationTakeUpCm)
+
+        if !started {
+            isFinishingInitialization = false
+        }
     }
 }
