@@ -187,7 +187,7 @@ struct EditProfileView: View {
                     .foregroundColor(AppTheme.textSecondary(for: colorScheme))
                 
                 HStack(spacing: 6) {
-                    Text(loginVM.userData?.role == 1 ? "照護者家屬" : "病患本人")
+                    Text(loginVM.userData?.role == 1 ? "Steadyer" : "Hoper")
                         .font(.system(size: 11, weight: .bold))
                         .padding(.horizontal, 8)
                         .padding(.vertical, 3)

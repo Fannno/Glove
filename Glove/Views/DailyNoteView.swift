@@ -502,7 +502,7 @@ struct DailyNoteDetailPopup: View {
                             .cornerRadius(6)
 
                         if item.isCaregiverOnly == true {
-                            Text("僅照護者家屬")
+                            Text("僅 Steadyer 家屬")
                                 .font(.system(size: 10, weight: .bold))
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 2)
@@ -644,7 +644,7 @@ struct AddDailyNoteSheet: View {
                             HStack(spacing: 6) {
                                 Image(systemName: "lock.shield")
                                     .foregroundColor(AppTheme.primary(for: colorScheme))
-                                Text("僅限照護者家屬查看")
+                                Text("僅限 Steadyer 家屬查看")
                             }
                         }
                         .tint(AppTheme.primary(for: colorScheme))
@@ -748,7 +748,7 @@ struct EditDailyNoteSheet: View {
                             HStack(spacing: 6) {
                                 Image(systemName: "lock.shield")
                                     .foregroundColor(AppTheme.primary(for: colorScheme))
-                                Text("僅限照護者家屬查看")
+                                Text("僅限 Steadyer 家屬查看")
                             }
                         }
                         .tint(AppTheme.primary(for: colorScheme))

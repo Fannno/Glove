@@ -110,7 +110,7 @@ struct ProfileSideMenuView: View {
                     .foregroundColor(AppTheme.textPrimary(for: colorScheme))
 
                 HStack {
-                    Text(loginVM.userData?.role == 1 ? "照護者" : "使用者")
+                    Text(loginVM.userData?.role == 1 ? "Steadyer" : "Hoper")
                         .font(.caption2)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 3)

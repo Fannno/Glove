@@ -37,9 +37,9 @@ final class LoginViewModel: ObservableObject {
     /// 病患姓名計算屬性（依當前身分切換呈現對象）
     var partnerName: String {
         if userData?.role == 1 {
-            return boundPartner?.partnerName ?? "患者"
+            return boundPartner?.partnerName ?? "Hoper"
         } else {
-            return userData?.userName ?? "患者"
+            return userData?.userName ?? "Hoper"
         }
     }
 

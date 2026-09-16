@@ -603,7 +603,7 @@ struct MedicationView: View {
                                             .foregroundColor(AppTheme.textSecondary(for: colorScheme))
                                     }
                                     if item.plan.creatorRole == 1 {
-                                        Text("照護者代填")
+                                        Text("Steadyer 代填")
                                             .font(.caption2.bold())
                                             .padding(.horizontal, 6)
                                             .padding(.vertical, 2)
@@ -683,7 +683,7 @@ struct MedicationView: View {
                                         .foregroundColor(AppTheme.textSecondary(for: colorScheme))
                                 }
                                 if record.creatorRole == 1 {
-                                    Text("照護者代填")
+                                    Text("Steadyer 代填")
                                         .font(.caption2.bold())
                                         .padding(.horizontal, 6)
                                         .padding(.vertical, 2)
@@ -934,7 +934,7 @@ struct MedicationView: View {
                                                 .foregroundColor(AppTheme.textSecondary(for: colorScheme))
                                         }
                                         if record.creatorRole == 1 {
-                                            Text("照護者代填")
+                                            Text("Steadyer 代填")
                                                 .font(.caption2.bold())
                                                 .padding(.horizontal, 6)
                                                 .padding(.vertical, 2)

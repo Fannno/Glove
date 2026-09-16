@@ -74,14 +74,16 @@ struct RegisterView: View {
 
             HStack(spacing: 10) {
                 roleCompactButton(
-                    title: "病患本人",
+                    title: "Hoper",
+                    subtitle: "(佩戴者)",
                     icon: "heart.text.square.fill",
                     tag: 0,
                     tintColor: AppTheme.primary(for: colorScheme)
                 )
 
                 roleCompactButton(
-                    title: "照護者家屬",
+                    title: "Steadyer",
+                    subtitle: "(照護者)",
                     icon: "person.badge.shield.checkmark.fill",
                     tag: 1,
                     tintColor: AppTheme.accent(for: colorScheme)
@@ -94,7 +96,7 @@ struct RegisterView: View {
         .softCardShadow()
     }
 
-    private func roleCompactButton(title: String, icon: String, tag: Int, tintColor: Color) -> some View {
+    private func roleCompactButton(title: String, subtitle: String, icon: String, tag: Int, tintColor: Color) -> some View {
         let isSelected = viewModel.role == tag
         return Button {
             withAnimation(.spring(response: 0.25, dampingFraction: 0.7)) {
@@ -106,9 +108,17 @@ struct RegisterView: View {
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundColor(isSelected ? tintColor : AppTheme.textSecondary(for: colorScheme))
 
-                Text(title)
-                    .font(.system(size: 14, weight: isSelected ? .bold : .medium))
-                    .foregroundColor(isSelected ? AppTheme.textPrimary(for: colorScheme) : AppTheme.textSecondary(for: colorScheme))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.system(size: 13, weight: isSelected ? .bold : .semibold))
+                        .foregroundColor(isSelected ? AppTheme.textPrimary(for: colorScheme) : AppTheme.textSecondary(for: colorScheme))
+                        .lineLimit(1)
+
+                    Text(subtitle)
+                        .font(.system(size: 10, weight: .regular))
+                        .foregroundColor(isSelected ? tintColor : AppTheme.textSecondary(for: colorScheme).opacity(0.8))
+                        .lineLimit(1)
+                }
 
                 Spacer(minLength: 0)
 
@@ -118,8 +128,8 @@ struct RegisterView: View {
                         .foregroundColor(tintColor)
                 }
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 12)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 10)
             .frame(maxWidth: .infinity)
             .background(isSelected ? tintColor.opacity(0.12) : AppTheme.background(for: colorScheme))
             .overlay(

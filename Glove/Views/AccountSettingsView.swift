@@ -62,9 +62,9 @@ struct AccountSettingsView: View {
             }
         } message: {
             if isPatient {
-                Text("確定要解除與照護者 [\(targetCaregiverToUnlink?.partnerName ?? targetCaregiverToUnlink?.partnerEmail ?? "")] 的綁定關係嗎？")
+                Text("確定要解除與 Steadyer [\(targetCaregiverToUnlink?.partnerName ?? targetCaregiverToUnlink?.partnerEmail ?? "")] 的綁定關係嗎？")
             } else {
-                Text("確定要解除與目前被照護者的連動關係嗎？解除後將無法檢視其健康數據。")
+                Text("確定要解除與目前 Hoper 的連動關係嗎？解除後將無法檢視其健康數據。")
             }
         }
         .alert("提示", isPresented: $showAlert) {
@@ -112,7 +112,7 @@ struct AccountSettingsView: View {
                     Text("身分角色")
                         .foregroundColor(AppTheme.textPrimary(for: colorScheme))
                     Spacer()
-                    Text(isPatient ? "病患本人" : "照護者家屬")
+                    Text(isPatient ? "Hoper" : "Steadyer")
                         .foregroundColor(AppTheme.textSecondary(for: colorScheme))
                 }
                 .padding(.vertical, 12)
@@ -193,7 +193,7 @@ struct AccountSettingsView: View {
                 Task { await generatePairingCodeAction() }
             }) {
                 HStack {
-                    Text("提供配對碼給照護者")
+                    Text("提供配對碼給 Steadyer")
                         .font(.body)
                         .foregroundColor(AppTheme.textPrimary(for: colorScheme))
                     Spacer()
@@ -214,7 +214,7 @@ struct AccountSettingsView: View {
                 Divider()
 
                 HStack {
-                    Text("目前尚未綁定任何照護者")
+                    Text("目前尚未綁定任何 Steadyer")
                         .font(.footnote)
                         .foregroundColor(AppTheme.textSecondary(for: colorScheme))
                     Spacer()
@@ -237,7 +237,7 @@ struct AccountSettingsView: View {
                         HStack(spacing: 12) {
                             VStack(alignment: .leading, spacing: 4) {
                                 HStack(spacing: 6) {
-                                    Text(caregiver.partnerName.isEmpty ? "未具名照護者" : caregiver.partnerName)
+                                    Text(caregiver.partnerName.isEmpty ? "未具名 Steadyer" : caregiver.partnerName)
                                         .font(.body.bold())
                                         .foregroundColor(AppTheme.textPrimary(for: colorScheme))
 
@@ -284,7 +284,7 @@ struct AccountSettingsView: View {
                         Circle()
                             .frame(width: 8, height: 8)
                             .foregroundColor(.green)
-                        Text("已連接病患")
+                        Text("已連接 Hoper")
                             .bold()
                             .foregroundColor(.green)
                     }
@@ -294,7 +294,7 @@ struct AccountSettingsView: View {
                 Divider()
 
                 HStack {
-                    Text("被照護者姓名")
+                    Text("Hoper 姓名")
                         .foregroundColor(AppTheme.textPrimary(for: colorScheme))
                     Spacer()
                     Text(patient.partnerName)
@@ -305,7 +305,7 @@ struct AccountSettingsView: View {
                 Divider()
 
                 HStack {
-                    Text("被照護者信箱")
+                    Text("Hoper 信箱")
                         .foregroundColor(AppTheme.textPrimary(for: colorScheme))
                     Spacer()
                     Text(patient.partnerEmail)
@@ -320,7 +320,7 @@ struct AccountSettingsView: View {
                 } label: {
                     HStack {
                         Spacer()
-                        Text("解除與被照護者的連動")
+                        Text("解除與 Hoper 的連動")
                             .font(.body.bold())
                             .foregroundColor(.red)
                         Spacer()
@@ -340,7 +340,7 @@ struct AccountSettingsView: View {
                         Image(systemName: "envelope")
                             .foregroundColor(AppTheme.textSecondary(for: colorScheme))
                             .frame(width: 24)
-                        TextField("請輸入病患的電子信箱", text: $inputPatientEmail)
+                        TextField("請輸入 Hoper 的電子信箱", text: $inputPatientEmail)
                             .foregroundColor(AppTheme.textPrimary(for: colorScheme))
                             .keyboardType(.emailAddress)
                             .autocapitalization(.none)
@@ -449,7 +449,7 @@ struct AccountSettingsView: View {
             loginVM.boundPartner = result
             loginVM.isLinked = true
 
-            alertMessage = "成功與被照護者 [\(result.partnerName)] 完成連動！"
+            alertMessage = "成功與 Steadyer [\(result.partnerName)] 完成連動！"
             showAlert = true
         } catch {
             alertMessage = error.localizedDescription
@@ -469,14 +469,14 @@ struct AccountSettingsView: View {
                 if let caregiver = targetCaregiverToUnlink {
                     try await bondRepo.unlinkCaregiver(caregiverEmail: caregiver.partnerEmail)
                     await checkConnectionStatus()
-                    alertMessage = "已成功解除與該照護者的連動。"
+                    alertMessage = "已成功解除與該 Steadyer 的連動。"
                 }
             } else {
                 try await bondRepo.unlinkCurrentPatient()
                 boundPatient = nil
                 loginVM.boundPartner = nil
                 loginVM.isLinked = false
-                alertMessage = "已成功解除與病患的連動關係。"
+                alertMessage = "已成功解除與 Hoper 的連動關係。"
             }
             showAlert = true
         } catch {
@@ -497,7 +497,7 @@ struct CaregiverDetailSettingsView: View {
             VStack(spacing: 20) {
                 // 照護者基本資訊卡片
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("照護者資訊")
+                    Text("Steadyer 資訊")
                         .font(.caption.bold())
                         .foregroundColor(AppTheme.textSecondary(for: colorScheme))
                         .padding(.horizontal, 4)
@@ -572,7 +572,7 @@ struct CaregiverDetailSettingsView: View {
                     .cornerRadius(15)
                     .softCardShadow()
 
-                    Text("開啟後，該照護者將能協助您建立用藥清單或新增用藥紀錄。")
+                    Text("開啟後，該 Steadyer 將能協助您建立用藥清單或新增用藥紀錄。")
                         .font(.caption2)
                         .foregroundColor(AppTheme.textSecondary(for: colorScheme))
                         .padding(.horizontal, 4)
@@ -585,7 +585,7 @@ struct CaregiverDetailSettingsView: View {
                 } label: {
                     HStack {
                         Spacer()
-                        Text("解除與此照護者的綁定")
+                        Text("解除與此 Steadyer 的綁定")
                             .font(.system(size: 15, weight: .bold))
                             .foregroundColor(.red)
                         Spacer()
@@ -602,7 +602,7 @@ struct CaregiverDetailSettingsView: View {
             .padding(.bottom, 32)
         }
         .background(AppTheme.background(for: colorScheme))
-        .navigationTitle("照護者設定")
+        .navigationTitle("Steadyer 設定")
         .navigationBarTitleDisplayMode(.inline)
     }
 

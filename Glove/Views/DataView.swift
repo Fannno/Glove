@@ -48,7 +48,7 @@ struct DataView: View {
 
     private var currentStatusText: String {
         if isCaregiver {
-            return "照護者家屬"
+            return "Steadyer 家屬"
         }
 
         if !bleVM.isConnected {
@@ -598,7 +598,7 @@ struct DataView: View {
 
     private func statusColor(_ status: String) -> Color {
         switch status {
-        case "照護者家屬": return AppTheme.primary(for: colorScheme)
+        case "Steadyer 家屬": return AppTheme.primary(for: colorScheme)
         case "資料正常": return .green
         case "資料累積中": return .orange
         case "裝置未連線", "未連線": return AppTheme.textSecondary(for: colorScheme)

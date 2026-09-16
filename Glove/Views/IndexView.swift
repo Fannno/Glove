@@ -133,7 +133,7 @@ struct IndexView: View {
                                     .font(.system(size: 36))
 
                                 VStack(alignment: .leading, spacing: 6) {
-                                    Text("當前被照護者")
+                                    Text("Hoper 姓名")
                                         .font(.system(size: 14))
                                         .foregroundColor(AppTheme.textSecondary(for: colorScheme))
 

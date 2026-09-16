@@ -243,7 +243,7 @@ struct NavigationBarView: View {
                 Image(systemName: "person.badge.shield.exclamationmark")
                     .font(.system(size: 60))
                     .foregroundColor(AppTheme.textSecondary(for: colorScheme))
-                Text("尚未綁定被照護者")
+                Text("尚未綁定 Hoper")
                     .font(.headline)
                     .foregroundColor(AppTheme.textPrimary(for: colorScheme))
                 Text("請點擊左上角選單前往「帳號設定」進行配對。")
@@ -257,7 +257,7 @@ struct NavigationBarView: View {
             .alert("家屬連動提醒", isPresented: $showBindReminderAlert) {
                 Button("確定") {}
             } message: {
-                Text("您目前尚未連接任何被照護者。\n請至「家屬連動設定」進行家屬連動，\n以解鎖完整功能。")
+                Text("您目前尚未連接任何 Hoper。\n請至「家屬連動設定」進行家屬連動，\n以解鎖完整功能。")
             }
         }
     }
