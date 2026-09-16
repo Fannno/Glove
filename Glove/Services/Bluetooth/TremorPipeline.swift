@@ -167,6 +167,21 @@ final class TremorPipeline {
 }
 
 extension TremorPipeline: BluetoothManagerDelegate {
+    /// 接收硬體控制指令寫入結果回呼（管線層不處理控制狀態，實作方法以滿足協定要求）
+    /// - Parameters:
+    ///   - manager: 發送回呼之藍牙管理器實體
+    ///   - commandId: 執行寫入之指令識別碼
+    ///   - value: 該指令寫入之數值
+    ///   - success: 藍牙特徵值寫入是否成功
+    public func bluetoothManager(
+        _ manager: BluetoothManager,
+        didWriteControlCommand commandId: UInt8,
+        value: UInt16,
+        success: Bool
+    ) {
+        // 管線層不負責模式控制邏輯，此處依設計保留空實作
+    }
+
     /// 接收藍牙端電池狀態更新委派事件
     /// - Parameters:
     ///   - manager: 藍牙管理器實體

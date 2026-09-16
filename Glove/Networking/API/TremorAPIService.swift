@@ -7,6 +7,9 @@ protocol TremorAPIServiceProtocol {
     /// 上傳單筆震顫分析特徵紀錄
     func uploadAnalysisRecord(_ record: TremorAnalysisRecordDTO, token: String) async throws
 
+    /// 更新既有震顫分析紀錄的情境標籤與備註
+    func updateAnalysisRecord(id: UUID, payload: TremorAnalysisUpdateDTO, token: String) async throws
+
     /// 取得歷史原始震顫取樣二進位壓縮封包清單
     func fetchRawDataHistory(token: String) async throws -> [RawTremorDataDTO]
 
@@ -44,6 +47,12 @@ final class TremorAPIService: TremorAPIServiceProtocol {
         return decoder
     }
 
+    /// 建立統一日期編碼策略的 JSONEncoder 實體
+    private func makeEncoder() -> JSONEncoder { let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        return encoder
+    }
+
     /// 上傳壓縮之原始震顫取樣數據至伺服器
     /// - Parameters:
     ///   - payload: 封裝壓縮數據之請求 DTO
@@ -58,9 +67,8 @@ final class TremorAPIService: TremorAPIServiceProtocol {
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
-        let encoder = JSONEncoder()
         do {
-            request.httpBody = try encoder.encode(payload)
+            request.httpBody = try makeEncoder().encode(payload)
         } catch {
             throw NetworkError.encodingFailed
         }
@@ -82,15 +90,49 @@ final class TremorAPIService: TremorAPIServiceProtocol {
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
         do {
-            request.httpBody = try encoder.encode(record)
+            request.httpBody = try makeEncoder().encode(record)
         } catch {
             throw NetworkError.encodingFailed
         }
 
         try await NetworkManager.shared.requestData(request)
+    }
+
+    /// 更新既有震顫分析紀錄的情境標籤與備註
+    /// - Parameters:
+    ///   - id: 欲更新之分析紀錄識別碼
+    ///   - payload: 更新後的情境標籤與備註
+    ///   - token: 身分驗證 Bearer 權杖
+    func updateAnalysisRecord(id: UUID, payload: TremorAnalysisUpdateDTO, token: String) async throws {
+        guard let url = URL(
+            string: "\(baseURL)/analysis/\(id.uuidString)"
+        ) else {
+            throw NetworkError.invalidURL
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "PATCH"
+
+        request.setValue(
+            "Bearer \(token)",
+            forHTTPHeaderField: "Authorization"
+        )
+
+        request.setValue(
+            "application/json",
+            forHTTPHeaderField: "Content-Type"
+        )
+
+        do {
+            request.httpBody =
+                try makeEncoder().encode(payload)
+        } catch {
+            throw NetworkError.encodingFailed
+        }
+
+        try await NetworkManager.shared
+            .requestData(request)
     }
 
     /// 向伺服器拉取所有歷史原始震顫數據封包

@@ -134,15 +134,9 @@ struct TremorEventCardView: View {
                         }
                     }
 
-                    Text(
-                        String(
-                            format: "強度: %.2f deg/s | 頻率: %.1f Hz",
-                            event.rmsValue,
-                            event.dominantFrequency
-                        )
-                    )
-                    .font(isSimpleMode ? .subheadline : .caption)
-                    .foregroundColor(AppTheme.textSecondary(for: colorScheme))
+                    Text(String(format: "強度: %.2f deg/s | 頻率: %.1f Hz", event.rmsValue, event.dominantFrequency))
+                        .font(isSimpleMode ? .subheadline : .caption)
+                        .foregroundColor(AppTheme.textSecondary(for: colorScheme))
                 }
 
                 Spacer()
@@ -336,12 +330,17 @@ struct TremorEventCardView: View {
             if selectedChartTab == 0 {
                 eventTrendChartView
             } else {
-                let psdData = dataVM.calculatePSDData(from: event.rawWindowData)
-                psdDetailChartView(psdData: psdData)
+                psdDetailChartView
             }
         }
     }
 
+    /// 產生等距且不越界的 X 軸刻度時間陣列
+    /// - Parameters:
+    ///   - start: 刻度起始時間
+    ///   - end: 刻度結束時間
+    ///   - strideSeconds: 刻度步進間隔秒數
+    /// - Returns: 經過間隔計算之 Date 陣列
     private func generateSafeXAxisTicks(start: Date, end: Date, strideSeconds: TimeInterval) -> [Date] {
         var ticks: [Date] = []
         var current = start.timeIntervalSince1970
@@ -354,123 +353,167 @@ struct TremorEventCardView: View {
         return ticks
     }
 
+    /// 事件前後 3 秒的連續 RMS 強度走勢圖表與馬達運轉時段標記
     private var eventTrendChartView: some View {
-        let history = dataVM.getHistory(surrounding: event.timestamp, seconds: 3)
-        let localMaxY = dataVM.calculateSafeMaxY(from: history)
+        let startDate = event.timestamp.addingTimeInterval(-3)
+        let endDate = event.timestamp.addingTimeInterval(3)
+        let chartHistory = dataVM.rmsChartHistory(surrounding: event.timestamp, seconds: 3)
+        _ = chartHistory.filter { $0.timestamp >= startDate && $0.timestamp <= endDate }
+
+        var visibleMotorIntervals = dataVM.motorIntervals(surrounding: event.timestamp, seconds: 3)
+
+        if event.isMotorActive {
+            let fallbackInterval = DataViewModel.MotorActiveInterval(
+                start: event.timestamp.addingTimeInterval(-0.5),
+                end: event.timestamp
+            )
+
+            let alreadyHasVisibleCoverage = visibleMotorIntervals.contains { interval in
+                interval.start <= fallbackInterval.start && interval.end >= fallbackInterval.end
+            }
+
+            if !alreadyHasVisibleCoverage {
+                visibleMotorIntervals.append(fallbackInterval)
+            }
+        }
+
+        let validValues = chartHistory.map(\.rmsValue).filter { $0.isFinite && !$0.isNaN }
+        let localMaxY = max(0.5, (validValues.max() ?? 0.5) * 1.15)
+        let safeTicks = generateSafeXAxisTicks(start: startDate, end: endDate, strideSeconds: 1)
 
         return VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                HStack(spacing: 6) {
-                    Image(systemName: "chart.line.uptrend.xyaxis")
-                        .foregroundColor(AppTheme.primary(for: colorScheme))
-                    Text("\(event.timestamp.toString(format: "HH:mm:ss")) 前後 3 秒震動強度走勢")
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundColor(AppTheme.textPrimary(for: colorScheme))
+            HStack(spacing: 6) {
+                Image(systemName: "chart.line.uptrend.xyaxis")
+                    .foregroundColor(AppTheme.primary(for: colorScheme))
 
-                    Button(action: {
-                        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            activeInfoSheet = .eventRMSTrend
-                        }
-                    }) {
-                        Image(systemName: "questionmark.circle")
-                            .font(.system(size: 14))
-                            .foregroundColor(AppTheme.primary(for: colorScheme).opacity(0.8))
+                Text("\(event.timestamp.toString(format: "HH:mm:ss")) 前後 3 秒震動強度走勢")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundColor(AppTheme.textPrimary(for: colorScheme))
+
+                Button {
+                    UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        activeInfoSheet = .eventRMSTrend
                     }
-                    .buttonStyle(.plain)
+                } label: {
+                    Image(systemName: "questionmark.circle")
+                        .font(.system(size: 14))
+                        .foregroundColor(AppTheme.primary(for: colorScheme).opacity(0.8))
                 }
+                .buttonStyle(.plain)
+
                 Spacer()
             }
 
-            if history.isEmpty {
+            if chartHistory.isEmpty {
                 Text("無區間數據")
                     .font(.caption)
                     .foregroundColor(AppTheme.textSecondary(for: colorScheme))
                     .frame(maxWidth: .infinity, minHeight: 150)
             } else {
-                let startDate = event.timestamp.addingTimeInterval(-3)
-                let endDate = event.timestamp.addingTimeInterval(3)
-                let safeTicks = generateSafeXAxisTicks(start: startDate, end: endDate, strideSeconds: 1.0)
-
                 Chart {
-                    ForEach(history) { point in
-                        if point.isMotorActive {
+                    ForEach(visibleMotorIntervals) { interval in
+                        let visibleStart = max(interval.start, startDate)
+                        let visibleEnd = min(interval.end, endDate)
+
+                        if visibleEnd > visibleStart {
                             RectangleMark(
-                                xStart: .value("開始", point.timestamp),
-                                xEnd: .value("結束", point.timestamp.addingTimeInterval(0.5)),
-                                yStart: .value("底", 0.0),
+                                xStart: .value("馬達開始", visibleStart),
+                                xEnd: .value("馬達結束", visibleEnd),
+                                yStart: .value("底", 0),
                                 yEnd: .value("頂", localMaxY)
                             )
-                            .foregroundStyle(Color.orange.opacity(0.12))
+                            .foregroundStyle(Color.orange.opacity(0.18))
                         }
+                    }
 
+                    ForEach(chartHistory) { point in
                         if point.rmsValue.isFinite && !point.rmsValue.isNaN {
                             LineMark(
                                 x: .value("時間", point.timestamp),
-                                y: .value("強度", point.rmsValue)
+                                y: .value("強度", max(0, point.rmsValue))
                             )
                             .foregroundStyle(AppTheme.primary(for: colorScheme))
-                            .lineStyle(StrokeStyle(lineWidth: 2.2))
+                            .lineStyle(StrokeStyle(lineWidth: 2))
                             .interpolationMethod(.linear)
                         }
-
-                        if point.rmsValue >= 0.20 && point.rmsValue.isFinite {
-                            let isCenterEvent = abs(point.timestamp.timeIntervalSince(event.timestamp)) < 0.35
-                            PointMark(
-                                x: .value("時間", point.timestamp),
-                                y: .value("強度", point.rmsValue)
-                            )
-                            .foregroundStyle(isCenterEvent ? Color.red : Color.orange)
-                            .symbolSize(isCenterEvent ? 85 : 35)
-                        }
                     }
+
+                    PointMark(
+                        x: .value("目前事件時間", event.timestamp),
+                        y: .value("目前事件強度", max(0, event.rmsValue))
+                    )
+                    .foregroundStyle(Color.orange)
+                    .symbolSize(85)
                 }
-                .chartYScale(domain: 0.0...localMaxY)
+                .chartXScale(domain: startDate...endDate)
+                .chartYScale(domain: 0...localMaxY)
                 .chartYAxis {
-                    AxisMarks(position: .trailing, values: .automatic(desiredCount: 4)) { val in
+                    AxisMarks(position: .trailing, values: .automatic(desiredCount: 4)) { value in
                         AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5, dash: [4, 4]))
                             .foregroundStyle(Color.gray.opacity(0.3))
-                        if let doubleVal = val.as(Double.self) {
+
+                        if let number = value.as(Double.self) {
                             AxisValueLabel {
-                                Text(String(format: "%.1f", doubleVal))
+                                Text(String(format: "%.1f", number))
                                     .font(.system(size: 10, design: .rounded))
                                     .foregroundColor(AppTheme.textSecondary(for: colorScheme))
                             }
                         }
                     }
                 }
-                .chartYAxisLabel("震動強度 (deg/s)", position: .top)
-                .chartXScale(domain: startDate...endDate)
                 .chartXAxis {
-                    AxisMarks(position: .bottom, values: safeTicks) { val in
+                    AxisMarks(position: .bottom, values: safeTicks) { value in
                         AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5, dash: [4, 4]))
                             .foregroundStyle(Color.gray.opacity(0.3))
-                        
-                        if let date = val.as(Date.self) {
-                            AxisValueLabel(date.toString(format: "ss") + "s")
-                                .font(.system(size: 10, weight: .medium, design: .rounded))
-                                .foregroundStyle(AppTheme.textSecondary(for: colorScheme))
+
+                        if let date = value.as(Date.self) {
+                            AxisValueLabel {
+                                Text(date.toString(format: "ss") + "s")
+                                    .font(.system(size: 10, weight: .medium, design: .rounded))
+                                    .foregroundStyle(AppTheme.textSecondary(for: colorScheme))
+                            }
                         }
                     }
+                }
+                .chartPlotStyle { plotArea in
+                    plotArea.clipped()
                 }
                 .frame(height: 160)
 
                 HStack(spacing: 14) {
                     HStack(spacing: 4) {
-                        Circle().fill(Color.red).frame(width: 8, height: 8)
-                        Text("發作核心點").font(.caption2).foregroundColor(AppTheme.textSecondary(for: colorScheme))
+                        Capsule()
+                            .fill(AppTheme.primary(for: colorScheme))
+                            .frame(width: 15, height: 3)
+                        Text("RMS 走勢")
                     }
+
                     HStack(spacing: 4) {
-                        Circle().fill(Color.orange).frame(width: 7, height: 7)
-                        Text("顯著震顫 (≥ 0.20)").font(.caption2).foregroundColor(AppTheme.textSecondary(for: colorScheme))
+                        Circle()
+                            .fill(Color.orange)
+                            .frame(width: 8, height: 8)
+                        Text("目前事件")
                     }
+
                     HStack(spacing: 4) {
-                        RoundedRectangle(cornerRadius: 2).fill(Color.orange.opacity(0.3)).frame(width: 9, height: 9)
-                        Text("馬達介入區間").font(.caption2).foregroundColor(AppTheme.textSecondary(for: colorScheme))
+                        RoundedRectangle(cornerRadius: 2)
+                            .fill(Color.orange.opacity(0.3))
+                            .frame(width: 9, height: 9)
+                        Text("馬達介入區間")
                     }
+
                     Spacer()
                 }
+                .font(.caption2)
+                .foregroundColor(AppTheme.textSecondary(for: colorScheme))
                 .padding(.top, 2)
+
+                if chartHistory.count == 1 {
+                    Text("目前只有一筆 RMS 資料，累積下一筆後才會形成折線。")
+                        .font(.caption)
+                        .foregroundColor(AppTheme.textSecondary(for: colorScheme))
+                }
             }
         }
         .padding()
@@ -479,115 +522,211 @@ struct TremorEventCardView: View {
         .shadow(color: Color.black.opacity(0.03), radius: 4, y: 2)
     }
 
-    private func psdDetailChartView(psdData: [DataViewModel.PSDPoint]) -> some View {
-        let isSignalReliable = event.rmsValue >= 0.20 && event.rmsValue.isFinite
-        let validPowers = psdData.map(\.power).filter { $0.isFinite && !$0.isNaN }
-        let maxPowerVal = validPowers.max() ?? 0.1
-        let maxPowerDomain = max(0.1, maxPowerVal * 1.2)
-        let maxPeak = isSignalReliable ? psdData.max(by: { $0.power < $1.power }) : nil
+    /// 事件對應之功率譜密度（PSD）離散頻譜分佈圖表
+    private var psdDetailChartView: some View {
+        let eventWindow = event.rawWindowData
+        let nearestHistoryWindow = dataVM.rmsTrendHistory
+            .filter { $0.rawWindowData.count == 400 }
+            .min { abs($0.timestamp.timeIntervalSince(event.timestamp)) < abs($1.timestamp.timeIntervalSince(event.timestamp)) }
 
-        return VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                HStack(spacing: 6) {
-                    Image(systemName: "chart.bar.fill")
-                        .foregroundColor(.purple)
-                    Text("\(event.timestamp.toString(format: "HH:mm:ss")) 的\n震動頻率分佈")
-                        .font(.system(size: 16, weight: .bold))
-                        .foregroundColor(AppTheme.textPrimary(for: colorScheme))
+        let nearestTimeDifference = nearestHistoryWindow.map { abs($0.timestamp.timeIntervalSince(event.timestamp)) } ?? .infinity
+        let resolvedWindow: [TremorDataPoint]
 
-                    Button(action: {
-                        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            activeInfoSheet = .eventPSD
-                        }
-                    }) {
-                        Image(systemName: "questionmark.circle")
-                            .font(.system(size: 15))
-                            .foregroundColor(.purple.opacity(0.8))
+        if eventWindow.count == 400 {
+            resolvedWindow = eventWindow
+        } else if let nearestHistoryWindow, nearestTimeDifference <= 5 {
+            resolvedWindow = nearestHistoryWindow.rawWindowData
+        } else {
+            resolvedWindow = []
+        }
+
+        let psdData = dataVM.calculatePSDData(from: resolvedWindow)
+        let isSignalReliable = event.rmsValue >= 0.20 && event.rmsValue.isFinite && !event.rmsValue.isNaN
+        let validPowers = psdData.map(\.power).filter { $0.isFinite && !$0.isNaN && $0 >= 0 }
+        let maxPowerValue = validPowers.max() ?? 0
+        let maxPowerDomain = max(0.0001, maxPowerValue * 1.2)
+
+        let maxPeak = isSignalReliable
+            ? psdData.filter { $0.frequencyHz >= 3 && $0.frequencyHz <= 7 && $0.power.isFinite && !$0.power.isNaN }.max(by: { $0.power < $1.power })
+            : nil
+
+        return VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .center, spacing: 8) {
+                Image(systemName: "chart.bar.fill")
+                    .font(.system(size: 18))
+                    .foregroundColor(.purple)
+
+                Text("震動頻率分佈")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundColor(AppTheme.textPrimary(for: colorScheme))
+                    .lineLimit(1)
+
+                Button {
+                    UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        activeInfoSheet = .eventPSD
                     }
-                    .buttonStyle(.plain)
+                } label: {
+                    Image(systemName: "questionmark.circle")
+                        .font(.system(size: 15))
+                        .foregroundColor(.purple.opacity(0.8))
                 }
+                .buttonStyle(.plain)
+
+                Spacer()
+            }
+
+            HStack(spacing: 8) {
+                Text(event.timestamp.toString(format: "HH:mm:ss"))
+                    .font(.system(size: 14, weight: .semibold, design: .rounded))
+                    .foregroundColor(AppTheme.textSecondary(for: colorScheme))
 
                 Spacer()
 
-                Text(String(format: "強度: %.2f deg/s", event.rmsValue.isFinite ? event.rmsValue : 0.0))
-                    .font(.caption)
-                    .fontWeight(.semibold)
+                Text(String(format: "強度：%.2f deg/s", event.rmsValue.isFinite ? event.rmsValue : 0))
+                    .font(.caption.weight(.semibold))
                     .foregroundColor(isSignalReliable ? .purple : AppTheme.textSecondary(for: colorScheme))
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(isSignalReliable ? Color.purple.opacity(0.1) : AppTheme.textSecondary(for: colorScheme).opacity(0.1))
-                    .cornerRadius(6)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(isSignalReliable ? Color.purple.opacity(0.10) : AppTheme.textSecondary(for: colorScheme).opacity(0.10))
+                    .cornerRadius(7)
             }
 
-            Chart {
-                RectangleMark(
-                    xStart: .value("區段開始", 3.0),
-                    xEnd: .value("區段結束", 7.0),
-                    yStart: .value("底", 0.0),
-                    yEnd: .value("頂", maxPowerDomain)
-                )
-                .foregroundStyle(Color.purple.opacity(0.08))
+            if psdData.isEmpty {
+                VStack(spacing: 8) {
+                    Image(systemName: "waveform.slash")
+                        .font(.system(size: 28))
+                        .foregroundColor(AppTheme.textSecondary(for: colorScheme).opacity(0.6))
 
-                ForEach(psdData) { psdPoint in
-                    if psdPoint.frequencyHz.isFinite && psdPoint.power.isFinite {
-                        BarMark(
-                            x: .value("頻率", psdPoint.frequencyHz),
-                            y: .value("PSD 能量", isSignalReliable ? psdPoint.power : 0),
-                            width: .fixed(5)
-                        )
-                        .foregroundStyle(
-                            (psdPoint.frequencyHz >= 3.0 && psdPoint.frequencyHz <= 7.0) ? Color.purple : AppTheme.textSecondary(for: colorScheme).opacity(0.25)
-                        )
-                    }
+                    Text("此事件沒有完整的頻率分析資料")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundColor(AppTheme.textSecondary(for: colorScheme))
+
+                    Text("需取得事件附近完整的 400 筆感測資料，才能繪製 PSD 柱狀圖。")
+                        .font(.caption)
+                        .multilineTextAlignment(.center)
+                        .foregroundColor(AppTheme.textSecondary(for: colorScheme))
+                }
+                .frame(maxWidth: .infinity, minHeight: 190)
+            } else {
+                HStack {
+                    Spacer()
+                    Text("PSD 能量 ((deg/s)²/Hz)")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(AppTheme.textSecondary(for: colorScheme))
                 }
 
-                if let peak = maxPeak, peak.power > 0, peak.frequencyHz.isFinite {
-                    RuleMark(x: .value("Peak", peak.frequencyHz))
-                        .lineStyle(StrokeStyle(lineWidth: 1.5, dash: [4, 4]))
-                        .foregroundStyle(Color.red)
-                        .annotation(position: .top, alignment: .center) {
-                            Text(String(format: "主峰: %.1f Hz", peak.frequencyHz))
-                                .font(.system(size: 10, weight: .bold))
-                                .foregroundColor(.white)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(Color.red)
-                                .cornerRadius(4)
+                Chart {
+                    RectangleMark(
+                        xStart: .value("區段開始", 3.0),
+                        xEnd: .value("區段結束", 7.0),
+                        yStart: .value("底", 0.0),
+                        yEnd: .value("頂", maxPowerDomain)
+                    )
+                    .foregroundStyle(Color.purple.opacity(0.08))
+
+                    ForEach(psdData) { point in
+                        if point.frequencyHz.isFinite && point.power.isFinite && !point.power.isNaN {
+                            BarMark(
+                                x: .value("頻率", point.frequencyHz),
+                                y: .value("PSD 能量", max(0, point.power)),
+                                width: .fixed(5)
+                            )
+                            .foregroundStyle(
+                                point.frequencyHz >= 3 && point.frequencyHz <= 7
+                                ? Color.purple
+                                : Color.purple.opacity(0.28)
+                            )
                         }
-                }
-            }
-            .chartYScale(domain: 0.0...maxPowerDomain)
-            .chartXAxis {
-                AxisMarks(values: [0, 3, 5, 7, 10, 15]) { val in
-                    AxisGridLine()
-                    AxisValueLabel {
-                        Text("\(val.as(Int.self) ?? 0) Hz")
-                            .font(.system(size: 10, design: .rounded))
-                            .foregroundColor(AppTheme.textSecondary(for: colorScheme))
+                    }
+
+                    if let peak = maxPeak, peak.power > 0 {
+                        RuleMark(x: .value("主要頻率", peak.frequencyHz))
+                            .lineStyle(StrokeStyle(lineWidth: 1.5, dash: [4, 4]))
+                            .foregroundStyle(Color.red)
+                            .annotation(position: .top, alignment: .center) {
+                                Text(String(format: "%.1f Hz", peak.frequencyHz))
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundColor(.white)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 3)
+                                    .background(Color.red)
+                                    .cornerRadius(5)
+                            }
                     }
                 }
-            }
-            .chartYAxisLabel("PSD 能量 ((deg/s)²/Hz)", position: .top)
-            .frame(height: 160)
+                .chartXScale(domain: 0...15)
+                .chartYScale(domain: 0...maxPowerDomain)
+                .chartXAxis {
+                    AxisMarks(values: [0, 3, 5, 7, 10, 15]) { value in
+                        AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5, dash: [4, 4]))
+                            .foregroundStyle(Color.gray.opacity(0.3))
 
-            HStack(spacing: 15) {
-                HStack(spacing: 4) {
-                    RoundedRectangle(cornerRadius: 2).fill(Color.purple.opacity(0.3)).frame(width: 12, height: 12)
-                    Text("3-7 Hz (典型震顫區)").font(.caption).foregroundColor(AppTheme.textSecondary(for: colorScheme))
+                        AxisValueLabel {
+                            if let frequency = value.as(Int.self) {
+                                Text("\(frequency) Hz")
+                                    .font(.system(size: 10, design: .rounded))
+                                    .foregroundColor(AppTheme.textSecondary(for: colorScheme))
+                            }
+                        }
+                    }
                 }
+                .chartYAxis {
+                    AxisMarks(position: .trailing, values: .automatic(desiredCount: 3)) { value in
+                        AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5))
+                            .foregroundStyle(Color.gray.opacity(0.25))
 
-                if isSignalReliable {
+                        AxisValueLabel {
+                            if let power = value.as(Double.self) {
+                                Text(formattedPSDPower(power))
+                                    .font(.system(size: 10, design: .rounded))
+                                    .foregroundColor(AppTheme.textSecondary(for: colorScheme))
+                            }
+                        }
+                    }
+                }
+                .frame(height: 190)
+
+                HStack(spacing: 15) {
                     HStack(spacing: 4) {
-                        Circle().fill(Color.red).frame(width: 6, height: 6)
-                        Text("主要震動頻率").font(.caption).foregroundColor(AppTheme.textSecondary(for: colorScheme))
+                        RoundedRectangle(cornerRadius: 2)
+                            .fill(Color.purple.opacity(0.3))
+                            .frame(width: 12, height: 12)
+                        Text("3–7 Hz 典型震顫區")
+                    }
+
+                    if maxPeak != nil {
+                        HStack(spacing: 4) {
+                            Circle()
+                                .fill(Color.red)
+                                .frame(width: 6, height: 6)
+                            Text("主要震動頻率")
+                        }
                     }
                 }
+                .font(.caption)
+                .foregroundColor(AppTheme.textSecondary(for: colorScheme))
             }
         }
         .padding()
         .background(AppTheme.cardBackground(for: colorScheme))
         .cornerRadius(16)
         .shadow(color: Color.black.opacity(0.05), radius: 5, y: 2)
+    }
+
+    /// 格式化 PSD 能量數值顯示，依據數值區間自動切換科學記號或小數點格式
+    /// - Parameter value: 待格式化之 PSD 數值
+    /// - Returns: 格式化後之字串
+    private func formattedPSDPower(_ value: Double) -> String {
+        if value == 0 {
+            return "0"
+        }
+        if abs(value) < 0.001 {
+            return String(format: "%.1e", value)
+        }
+        if abs(value) < 0.1 {
+            return String(format: "%.3f", value)
+        }
+        return String(format: "%.2f", value)
     }
 }

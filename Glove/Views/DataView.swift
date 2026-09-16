@@ -204,8 +204,8 @@ struct DataView: View {
     }
 
     private var titleText: String {
-        if isCaregiver { return "\(loginVM.partnerName) 的震動數據" }
-        return "即時震動數據"
+        if isCaregiver { return "\(loginVM.partnerName) 的動作數據" }
+        return "即時動作數據"
     }
 
     /// 歷史補填提醒橫幅與候選事件統計
@@ -472,6 +472,8 @@ struct DataView: View {
     private func rmsTrendChartView(parentProxy: ScrollViewProxy) -> some View {
         RMSTrendChartViewContainer(
             history: dataVM.rmsTrendHistory,
+            lineHistory: dataVM.mergedRMSChartHistory(),
+            motorIntervals: dataVM.motorActiveIntervals,
             events: dataVM.filteredEvents,
             selectedDate: dataVM.selectedFilterDate,
             parentProxy: parentProxy,
@@ -608,6 +610,8 @@ struct DataView: View {
 /// RMS 走勢圖表容器：折線穿過事件波峰，只有事件顯示為橘/紅點
 private struct RMSTrendChartViewContainer: View {
     let history: [DataViewModel.RMSTrendPoint]
+    let lineHistory: [DataViewModel.RMSTrendPoint]
+    let motorIntervals: [DataViewModel.MotorActiveInterval]
     let events: [TremorEvent]
     let selectedDate: Date
     let parentProxy: ScrollViewProxy
@@ -704,25 +708,69 @@ private struct RMSTrendChartViewContainer: View {
         }
     }
 
-    /// 線串接點核心：將分析紀錄作為波峰節點併入折線取樣序列
-    private var chartLineHistory: [DataViewModel.RMSTrendPoint] {
-        var combined = bufferedHistory
-        for event in bufferedEvents {
-            if !combined.contains(where: { abs($0.timestamp.timeIntervalSince(event.timestamp)) <= 0.6 }) {
-                combined.append(
-                    DataViewModel.RMSTrendPoint(
-                        timestamp: event.timestamp,
-                        timeLabel: event.timeLabel,
-                        rmsValue: event.rmsValue,
-                        isMotorActive: event.isMotorActive,
-                        rawWindowData: event.rawWindowData
+    /// 主圖實際使用的馬達區間。
+    private var effectiveMotorIntervals: [DataViewModel.MotorActiveInterval] {
+        var intervals = motorIntervals
+
+        for event in events where event.isMotorActive {
+            intervals.append(
+                DataViewModel.MotorActiveInterval(
+                    start: event.timestamp.addingTimeInterval(-0.5),
+                    end: event.timestamp
+                )
+            )
+        }
+
+        let sorted = intervals.sorted { $0.start < $1.start }
+        var merged: [DataViewModel.MotorActiveInterval] = []
+
+        for interval in sorted {
+            guard interval.end > interval.start else { continue }
+
+            if let last = merged.last,
+               interval.start.timeIntervalSince(last.end) <= 0.05 {
+                merged.removeLast()
+                merged.append(
+                    DataViewModel.MotorActiveInterval(
+                        id: last.id,
+                        start: last.start,
+                        end: max(last.end, interval.end)
                     )
                 )
+            } else {
+                merged.append(interval)
             }
         }
-        return combined.sorted { $0.timestamp < $1.timestamp }
+
+        return merged
     }
 
+    /// 顯示範圍附近的馬達啟動區間。
+    private var bufferedMotorIntervals: [DataViewModel.MotorActiveInterval] {
+        let buffer = max(clampedVisibleDuration * 1.5, 5)
+        let start = clampedChartScrollPosition.addingTimeInterval(-buffer)
+        let end = visibleEndDate.addingTimeInterval(buffer)
+
+        return effectiveMotorIntervals.filter {
+            $0.end >= start && $0.start <= end
+        }
+    }
+
+    /// 顯示範圍附近的共用折線資料
+    private var chartLineHistory: [DataViewModel.RMSTrendPoint] {
+        let buffer = max(clampedVisibleDuration * 1.5, 5)
+        let startDate = clampedChartScrollPosition
+            .addingTimeInterval(-buffer)
+        let endDate = visibleEndDate
+            .addingTimeInterval(buffer)
+
+        return lineHistory.filter {
+            $0.timestamp >= startDate &&
+            $0.timestamp <= endDate &&
+            $0.rmsValue.isFinite &&
+            !$0.rmsValue.isNaN
+        }
+    }
     /// 同時考量走勢背景與事件波峰之高度，避免被壓在 0.5 底部
     private var dynamicMaxY: Double {
         let hValues = bufferedHistory.map(\.rmsValue).filter { $0.isFinite && !$0.isNaN }
@@ -926,15 +974,18 @@ private struct RMSTrendChartViewContainer: View {
 
         GeometryReader { geometry in
             Chart {
-                ForEach(bufferedHistory) { point in
-                    if point.isMotorActive {
+                ForEach(bufferedMotorIntervals) { interval in
+                    let visibleStart = max(interval.start, clampedChartScrollPosition)
+                    let visibleEnd = min(interval.end, visibleEndDate)
+
+                    if visibleEnd > visibleStart {
                         RectangleMark(
-                            xStart: .value("開始", point.timestamp),
-                            xEnd: .value("結束", point.timestamp.addingTimeInterval(0.5)),
+                            xStart: .value("馬達開始", visibleStart),
+                            xEnd: .value("馬達結束", visibleEnd),
                             yStart: .value("底", 0.0),
                             yEnd: .value("頂", currentMaxY)
                         )
-                        .foregroundStyle(Color.orange.opacity(0.10))
+                        .foregroundStyle(Color.orange.opacity(0.18))
                     }
                 }
 

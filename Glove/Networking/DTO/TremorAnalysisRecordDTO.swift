@@ -37,3 +37,13 @@ public struct TremorAnalysisRecordDTO: Codable, Identifiable, Sendable {
         self.note = note
     }
 }
+
+/// 更新震顫分析紀錄時傳送至後端的資料
+struct TremorAnalysisUpdateDTO: Codable {
+
+    /// 更新後的生活情境標籤
+    let activityTag: String
+
+    /// 分析紀錄備註
+    let note: String?
+}

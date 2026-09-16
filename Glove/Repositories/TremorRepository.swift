@@ -10,6 +10,9 @@ protocol TremorRepositoryProtocol {
     /// 上傳單筆震顫分析結果紀錄至伺服器
     func syncAnalysisResult(record: TremorAnalysisRecordDTO) async throws
 
+    /// 更新既有震顫分析紀錄的情境標籤與備註
+    func updateAnalysisRecord(id: UUID, activityTag: String, note: String?) async throws
+
     /// 上傳分析紀錄的別名方法
     func uploadAnalysisRecord(_ record: TremorAnalysisRecordDTO) async throws
 
@@ -37,6 +40,13 @@ final class TremorRepository: TremorRepositoryProtocol {
     /// 身分驗證 Token 提供者閉包
     private let tokenProvider: () -> String?
 
+    /// 統一重複使用的 JSONEncoder
+    private let encoder: JSONEncoder = {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        return encoder
+    }()
+    
     /// 初始化儲存庫並注入 API 服務與 Token 提供者
     init(
         apiService: TremorAPIServiceProtocol = TremorAPIService.shared,
@@ -88,12 +98,21 @@ final class TremorRepository: TremorRepositoryProtocol {
                 motorEnabled: UInt8(point.motorEnabled)
             )
         }
-
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        let jsonData = try encoder.encode(dtos)
-        let compressedData = try (jsonData as NSData).compressed(using: .zlib) as Data
-
+        
+        let jsonData: Data
+        do {
+            jsonData = try encoder.encode(dtos)
+        } catch {
+            throw NetworkError.encodingFailed
+        }
+        
+        let compressedData: Data
+        do {
+            compressedData = try (jsonData as NSData).compressed(using: .zlib) as Data
+        } catch {
+            throw error
+        }
+        
         let payload = TremorRawUploadRequestDTO(
             sessionId: sessionId,
             sampleCount: rawPoints.count,
@@ -109,6 +128,24 @@ final class TremorRepository: TremorRepositoryProtocol {
         try await apiService.uploadAnalysisRecord(record, token: token)
     }
 
+    /// 更新既有震顫分析紀錄的情境標籤與備註
+    func updateAnalysisRecord(id: UUID, activityTag: String, note: String?) async throws {
+        let token = try getValidToken()
+        
+        let trimmedTag = activityTag.trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        let payload = TremorAnalysisUpdateDTO(
+            activityTag: trimmedTag.isEmpty ? "未標記" : trimmedTag,
+            note: note
+        )
+        
+        try await apiService.updateAnalysisRecord(
+            id: id,
+            payload: payload,
+            token: token
+        )
+    }
+    
     /// 上傳分析紀錄的別名方法
     func uploadAnalysisRecord(_ record: TremorAnalysisRecordDTO) async throws {
         try await syncAnalysisResult(record: record)

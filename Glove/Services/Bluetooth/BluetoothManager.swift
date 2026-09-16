@@ -11,6 +11,14 @@ public protocol BluetoothManagerDelegate: AnyObject {
     func bluetoothManager(_ manager: BluetoothManager, didUpdateState state: CBManagerState)
     /// 接收藍牙連線就緒狀態（需讀寫與通知皆完成初始化）
     func bluetoothManager(_ manager: BluetoothManager, didUpdateConnection isConnected: Bool)
+    /// 接收控制指令 BLE 寫入結果。
+    /// success 代表 iPhone -> ESP32 GATT 寫入成功；STM32 是否收到仍需由 STM32 Debug / ACK 確認。
+    func bluetoothManager(
+        _ manager: BluetoothManager,
+        didWriteControlCommand commandId: UInt8,
+        value: UInt16,
+        success: Bool
+    )
 }
 
 /// 底層 CoreBluetooth 傳輸管理類別，負責設備掃描、GATT 連線、特徵值訂閱及微調指令封裝發送
@@ -26,17 +34,24 @@ public final class BluetoothManager: NSObject {
 
     /// 單次相對長度命令最大上限值（單位：公釐，50 mm 等於 5 cm）
     private let controlMaxMagnitudeMm = 50
+    /// 0x06 初始化 baseline 僅允許由 400 mm Home 收緊最多 140 mm。
+    private let controlMinBaselineMm = 260
+    private let controlMaxBaselineMm = 400
 
     /// 控制指令位元組標頭列舉
     private enum ControlCommand: UInt8 {
-        /// 滑桿相對長度縮短（負值）
+        /// Slider 相對長度縮短（負值）
         case lengthNegative = 0x02
-        /// 滑桿相對長度加長（正值）
+        /// Slider 相對長度加長（正值）
         case lengthPositive = 0x03
         /// 手動輸入相對長度縮短（負值）
         case manualLengthNegative = 0x04
         /// 手動輸入相對長度加長（正值）
         case manualLengthPositive = 0x05
+        /// 設定初始／日常基準線長（絕對 mm）
+        case setBaselineLength = 0x06
+        /// AUTO / MANUAL 模式；0 = MANUAL，1 = AUTO
+        case setAutomaticMode = 0x07
     }
 
     /// CoreBluetooth 核心物件與當前連線周邊設備
@@ -49,8 +64,12 @@ public final class BluetoothManager: NSObject {
     private var notifyReady = false
     private var reportedConnectionReady = false
 
-    /// 紀錄前一次發送之控制指令封包資訊（指令 ID 與數值）
-    private var lastSentCommand: (commandId: UInt8, value: UInt16)?
+    /// Write With Response 的待確認控制指令佇列，避免連續寫入時回覆對錯指令。
+    private struct PendingControlWrite {
+        let commandId: UInt8
+        let value: UInt16
+    }
+    private var pendingControlWrites: [PendingControlWrite] = []
 
     /// 檢查手機系統藍牙是否已開啟
     public var isBluetoothEnabled: Bool {
@@ -186,29 +205,55 @@ public final class BluetoothManager: NSObject {
         sendControlPacket(command: .manualLengthPositive, value: UInt16(magnitudeMm))
     }
 
-    /// 組裝 3 位元組控制指令二進位封包並寫入至特徵值
-    /// - Parameters:
-    ///   - command: 控制指令標頭列舉
-    ///   - value: 16 位元無號整數絕對量值（Big-Endian 排列）
-    private func sendControlPacket(command: ControlCommand, value: UInt16) {
+    /// 設定手套的初始／日常基準線長（絕對 mm，0x06）。
+    /// 若當下正在 PULLING / RETURNING / APP_ADJUSTING，
+    /// STM32 會保留最新目標並在安全狀態執行。
+    @discardableResult
+    public func sendBaselineLength(magnitudeMm: Int) -> Bool {
+        guard (controlMinBaselineMm...controlMaxBaselineMm).contains(magnitudeMm) else {
+            AppLog.error("初始基準線長必須介於 260...400 mm（最多收緊 14 cm）。")
+            return false
+        }
+
+        return sendControlPacket(
+            command: .setBaselineLength,
+            value: UInt16(magnitudeMm)
+        )
+    }
+
+    /// 切換自動抑震控制權（0x07）。
+    /// false = MANUAL：禁止 Gate 自動啟動馬達，但保留 App/Encoder/安全鏈。
+    /// true  = AUTO：允許 Gate 在條件成立時啟動馬達。
+    @discardableResult
+    public func sendAutomaticMode(_ enabled: Bool) -> Bool {
+        sendControlPacket(
+            command: .setAutomaticMode,
+            value: enabled ? 1 : 0
+        )
+    }
+
+    /// 組裝 3 位元組控制指令二進位封包並寫入至特徵值。
+    /// 回傳 true 只代表成功交給 CoreBluetooth 排程，不代表 STM32 已收到。
+    @discardableResult
+    private func sendControlPacket(command: ControlCommand, value: UInt16) -> Bool {
         guard let peripheral = connectedPeripheral else {
             AppLog.error("指令無法發送：尚未抓取到周邊設備。")
-            return
+            return false
         }
 
         guard peripheral.state == .connected else {
             AppLog.error("指令無法發送：Peripheral 尚未完成 BLE 連線。")
-            return
+            return false
         }
 
         guard let characteristic = ioCharacteristic else {
             AppLog.error("指令無法發送：控制 Characteristic 尚未綁定。")
-            return
+            return false
         }
 
         guard characteristic.uuid == ioCharacteristicUUID else {
             AppLog.error("指令無法發送：Characteristic UUID 不正確。")
-            return
+            return false
         }
 
         let high = UInt8((value >> 8) & 0xFF)
@@ -220,15 +265,23 @@ public final class BluetoothManager: NSObject {
 
         let writeType: CBCharacteristicWriteType
         if characteristic.properties.contains(.write) {
+            // ESP32 同時支援 WRITE / WRITE_NR 時優先使用有回覆的 Write，
+            // 讓 App 在 didWriteValueFor 成功後才切換 AUTO / MANUAL 顯示。
             writeType = .withResponse
         } else if characteristic.properties.contains(.writeWithoutResponse) {
             writeType = .withoutResponse
         } else {
             AppLog.error("指令無法發送：Characteristic 不支援 Write。")
-            return
+            return false
         }
 
         AppLog.debug("TX -> ESP32: \(packetHex)")
+
+        if writeType == .withResponse {
+            pendingControlWrites.append(
+                PendingControlWrite(commandId: command.rawValue, value: value)
+            )
+        }
 
         peripheral.writeValue(
             packet,
@@ -236,11 +289,17 @@ public final class BluetoothManager: NSObject {
             type: writeType
         )
 
-        lastSentCommand = (command.rawValue, value)
-
         if writeType == .withoutResponse {
             AppLog.debug("BLE Write Without Response 已送出: \(packetHex)")
+            delegate?.bluetoothManager(
+                self,
+                didWriteControlCommand: command.rawValue,
+                value: value,
+                success: true
+            )
         }
+
+        return true
     }
 
     /// 重設內部特徵值參照與連線就緒狀態
@@ -249,7 +308,7 @@ public final class BluetoothManager: NSObject {
         writeReady = false
         notifyReady = false
         reportedConnectionReady = false
-        lastSentCommand = nil
+        pendingControlWrites.removeAll(keepingCapacity: false)
     }
 
     /// 檢查寫入與通知特徵值是否皆已就緒，並於狀態變更時通知委派對象
@@ -492,22 +551,47 @@ extension BluetoothManager: CBPeripheralDelegate {
             return
         }
 
+        let pendingCommand: PendingControlWrite? = {
+            guard !pendingControlWrites.isEmpty else {
+                return nil
+            }
+            return pendingControlWrites.removeFirst()
+        }()
+
         if let error = error {
             AppLog.error("BLE 寫入失敗: \(error.localizedDescription)")
+
+            if let command = pendingCommand {
+                delegate?.bluetoothManager(
+                    self,
+                    didWriteControlCommand: command.commandId,
+                    value: command.value,
+                    success: false
+                )
+            }
             return
         }
 
         AppLog.debug("BLE 寫入成功: \(characteristic.uuid.uuidString)")
 
-        if let command = lastSentCommand {
+        if let command = pendingCommand {
             AppLog.debug(
                 String(
-                    format: "Last command = %02X %02X %02X",
+                    format: "Confirmed command = %02X %02X %02X",
                     command.commandId,
                     UInt8((command.value >> 8) & 0xFF),
                     UInt8(command.value & 0xFF)
                 )
             )
+
+            delegate?.bluetoothManager(
+                self,
+                didWriteControlCommand: command.commandId,
+                value: command.value,
+                success: true
+            )
+        } else {
+            AppLog.error("收到 BLE Write 回覆，但找不到對應的待確認控制指令。")
         }
     }
 }

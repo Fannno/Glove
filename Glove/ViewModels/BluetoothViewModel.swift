@@ -7,27 +7,10 @@ import SwiftUI
 final class BluetoothViewModel: NSObject, ObservableObject {
 
     static let shared = BluetoothViewModel()
+    let pipeline = TremorPipeline()
+    let bluetoothManager = BluetoothManager()
 
-    /// 藍牙硬體連線與權限狀態
-    @Published var isConnected: Bool = false
-    @Published var isScanning: Bool = false
-    @Published var isBluetoothPoweredOn: Bool = true
-    @Published var isBluetoothUnauthorized: Bool = false
-    @Published var statusMessage: String = "未連線"
-
-    /// 裝置電量與硬體致動狀態
-    @Published var batteryLevel: Int = 0
-    @Published var isMotorEnabled: Bool = false
-    @Published var isAutomaticSuppressionEnabled = false
-
-    /// 即時震顫分析數據
-    @Published var dominantFrequencyText: String = "--"
-    @Published var tremorStrengthRms: Double = 0.0
-
-    /// 長度調整控制與常數設定
-    @Published var initialCableLengthMm = 400.0
-    @Published var initialTakeUpCm = 0.0
-    @Published var lengthOffsetMm: Double = 0.0
+    /// 纜繩出廠歸零原點、收緊上下限、有效長度邊界與微調極限常數
     static let initialCableHomeMm = 400.0
     static let initialTakeUpDefaultCm = 0.0
     static let initialTakeUpMinCm = 0.0
@@ -38,34 +21,61 @@ final class BluetoothViewModel: NSObject, ObservableObject {
     static let maxLengthAdjustmentMm: Int = 50
     static let maxLengthAdjustmentCm: Double = 5.0
 
-    /// 資料管線、核心管理器與非同步工作實體
-    let pipeline = TremorPipeline()
-    let bluetoothManager = BluetoothManager()
+    /// 藍牙連線、掃描、硬體供電、系統授權與狀態文字
+    @Published var isConnected: Bool = false
+    @Published var isScanning: Bool = false
+    @Published var isBluetoothPoweredOn: Bool = true
+    @Published var isBluetoothUnauthorized: Bool = false
+    @Published var statusMessage: String = "未連線"
+
+    /// 裝置剩餘電量百分比與馬達運轉致動狀態
+    @Published var batteryLevel: Int = 0
+    @Published var isMotorEnabled: Bool = false
+
+    /// 全自動震顫抑制模式啟用狀態、指令回覆等待旗標與目標模式暫存
+    @Published var isAutomaticSuppressionEnabled = false
+    @Published var isAutomaticModeCommandPending = false
+    private var pendingAutomaticSuppressionTarget: Bool?
+
+    /// 手套初始化流程之傳輸等待、執行中、成功與錯誤訊息狀態
+    @Published var isInitialLengthCommandPending = false
+    @Published var isInitializationSequencePending = false
+    @Published var initializationSequenceSucceeded = false
+    @Published var initializationSequenceErrorMessage: String? = nil
+
+    /// 即時震顫主頻率與震顫強度均方根值顯示數據
+    @Published var dominantFrequencyText: String = "--"
+    @Published var tremorStrengthRms: Double = 0.0
+
+    /// 纜繩初始基準長度、初始收緊公分數與使用者介面微調偏移量
+    @Published var initialCableLengthMm = 400.0
+    @Published var initialTakeUpCm = 0.0
+    @Published var lengthOffsetMm: Double = 0.0
+
+    /// 掃描逾時監控任務、待確認基準寫入計數與初始化流程防衝突旗標
     private var scanTimeoutTask: Task<Void, Never>?
+    private var pendingBaselineWriteCount = 0
+    private var enableAutoAfterPendingBaselineWrites = false
+    private var initializationBaselineWriteFailed = false
+    private var initializationAutoWaitingForModeSlot = false
 
     /// 私有化建構子，配置分析管線回呼並自動評估藍牙狀態
     private override init() {
         super.init()
 
-        // 綁定資料中心分析管線
         DataViewModel.shared.bindPipeline(pipeline)
-
-        // 指定底層藍牙事件委派
         bluetoothManager.delegate = self
 
-        // 監聽管線發出之相對長度調整命令並轉發至硬體
         pipeline.onSendLengthAdjustment = { [weak self] offset in
             self?.bluetoothManager.sendLengthAdjustment(offset)
         }
 
-        // 監聽管線發出之手動絕對長度命令並轉發至硬體
         pipeline.onSendManualLengthInput = { [weak self] offset in
             self?.bluetoothManager.sendManualLengthInput(offset)
         }
 
         setupPipelineCallbacks()
 
-        // 若藍牙已啟用且尚未連線，則自動啟動掃描
         if bluetoothManager.isBluetoothEnabled && !isConnected {
             startScan()
         }
@@ -103,7 +113,7 @@ final class BluetoothViewModel: NSObject, ObservableObject {
         }
     }
 
-    /// 啟動藍牙搜尋與配對手套裝置
+    /// 啟動藍牙搜尋與配對手套裝置，包含權限檢查與 8 秒逾時防護機制
     func startScan() {
         if bluetoothManager.isBluetoothUnauthorized {
             isBluetoothUnauthorized = true
@@ -152,16 +162,27 @@ final class BluetoothViewModel: NSObject, ObservableObject {
         }
     }
 
-    /// 中斷當前藍牙連線並重設相關運作狀態
+    /// 主動中斷手套藍牙連線，重設管線緩衝區、結算上傳資料並重設會話
     func disconnect() {
         scanTimeoutTask?.cancel()
         isScanning = false
         isMotorEnabled = false
         isAutomaticSuppressionEnabled = false
+        isAutomaticModeCommandPending = false
+        pendingAutomaticSuppressionTarget = nil
+        pendingBaselineWriteCount = 0
+        isInitialLengthCommandPending = false
+        enableAutoAfterPendingBaselineWrites = false
+        initializationBaselineWriteFailed = false
+        initializationAutoWaitingForModeSlot = false
+        isInitializationSequencePending = false
+        initializationSequenceSucceeded = false
+        initializationSequenceErrorMessage = nil
         isConnected = false
         statusMessage = "未連線"
 
         pipeline.resetPipeline()
+        DataViewModel.shared.resetRawUploadBuffer(flushRemaining: true)
         DataViewModel.shared.currentSessionId = UUID().uuidString
 
         bluetoothManager.disconnect()
@@ -193,12 +214,11 @@ final class BluetoothViewModel: NSObject, ObservableObject {
             bluetoothManager.sendLengthAdjustment(offsetMm)
         }
 
-        // 送出後立即歸零，避免下一次調整時數值重複累加
         lengthOffsetMm = 0.0
     }
 
-    /// 提交手動文字輸入之相對長度調整量（單位：公分），轉換為整數公釐後透過藍牙發送
-    /// - Parameter offsetCm: 使用者輸入之位移量（公分）
+    /// 發送手動輸入之長度微調命令至硬體端
+    /// - Parameter offsetCm: 欲微調之長度（單位：公分 cm）
     func sendManualLengthInputCm(_ offsetCm: Double) {
         guard isConnected else {
             AppLog.error("略過手動指令：手套尚未連線完成。")
@@ -216,12 +236,14 @@ final class BluetoothViewModel: NSObject, ObservableObject {
         }
     }
 
-    /// 設定初次穿戴時的初始預拉緊長度基準
+    /// 送出初始基準長度設定至硬體端
     /// - Parameter takeUpCm: 預收緊長度（單位：公分 cm）
-    func sendInitialTakeUpCm(_ takeUpCm: Double) {
+    /// - Returns: 是否成功排入藍牙寫入佇列
+    @discardableResult
+    func sendInitialTakeUpCm(_ takeUpCm: Double) -> Bool {
         guard isConnected else {
             AppLog.error("略過初始收緊指令：手套尚未連線完成。")
-            return
+            return false
         }
 
         let clampedCm = min(
@@ -234,7 +256,111 @@ final class BluetoothViewModel: NSObject, ObservableObject {
         initialTakeUpCm = Double(roundedTakeUpMm) / 10.0
         initialCableLengthMm = Double(baselineMm)
 
-        bluetoothManager.sendBaselineLength(magnitudeMm: baselineMm)
+        let queued = bluetoothManager.sendBaselineLength(magnitudeMm: baselineMm)
+        if queued {
+            pendingBaselineWriteCount += 1
+            isInitialLengthCommandPending = true
+            AppLog.debug("0x06 已排入 BLE，待確認 baseline=\(baselineMm) mm，pending=\(pendingBaselineWriteCount)")
+        } else {
+            AppLog.error("初始長度指令未成功排入 BLE 傳送。")
+        }
+
+        return queued
+    }
+
+    /// 確認初始長度並在基準確認完成後自動啟用抑震模式
+    /// - Parameter takeUpCm: 最終選定之收緊長度（單位：公分 cm）
+    /// - Returns: 初始化流程是否順利啟動
+    @discardableResult
+    func confirmInitialTakeUpAndEnableAuto(_ takeUpCm: Double) -> Bool {
+        guard isConnected else {
+            initializationSequenceErrorMessage = "手套尚未連線，無法完成初始化。"
+            initializationSequenceSucceeded = false
+            return false
+        }
+
+        guard !isInitializationSequencePending else {
+            AppLog.debug("初始化流程已在執行，略過重複確認。")
+            return false
+        }
+
+        initializationSequenceSucceeded = false
+        initializationSequenceErrorMessage = nil
+        initializationBaselineWriteFailed = false
+        enableAutoAfterPendingBaselineWrites = true
+        initializationAutoWaitingForModeSlot = false
+        isInitializationSequencePending = true
+
+        guard sendInitialTakeUpCm(takeUpCm) else {
+            failInitializationSequence("初始長度 0x06 無法送出，請確認藍牙連線後再試一次。")
+            return false
+        }
+
+        return true
+    }
+
+    /// 取消當前未完成的初始化與自動抑震串接流程
+    func cancelInitialCalibrationSequence() {
+        enableAutoAfterPendingBaselineWrites = false
+        initializationBaselineWriteFailed = false
+        initializationAutoWaitingForModeSlot = false
+        isInitializationSequencePending = false
+        initializationSequenceSucceeded = false
+        initializationSequenceErrorMessage = nil
+    }
+
+    /// 重設初始化流程回饋提示狀態
+    func resetInitializationSequenceFeedback() {
+        guard !isInitializationSequencePending else { return }
+        initializationSequenceSucceeded = false
+        initializationSequenceErrorMessage = nil
+    }
+
+    /// 清除初始化流程錯誤訊息
+    func clearInitializationSequenceError() {
+        initializationSequenceErrorMessage = nil
+    }
+
+    /// 於所有基準長度指令確認寫入後排入自動抑震模式命令
+    private func startInitializationAutoIfPossible() {
+        guard isInitializationSequencePending else { return }
+        guard enableAutoAfterPendingBaselineWrites else { return }
+        guard pendingBaselineWriteCount == 0 else { return }
+
+        if initializationBaselineWriteFailed {
+            failInitializationSequence("初始長度指令寫入失敗，因此未啟用 AUTO。請重新調整後再試一次。")
+            return
+        }
+
+        if isAutomaticModeCommandPending {
+            initializationAutoWaitingForModeSlot = true
+            AppLog.debug("0x06 已全部確認，等待目前 0x07 回覆完成後再送 AUTO。")
+            return
+        }
+
+        initializationAutoWaitingForModeSlot = false
+        pendingAutomaticSuppressionTarget = true
+        isAutomaticModeCommandPending = true
+
+        let queued = bluetoothManager.sendAutomaticMode(true)
+        if queued {
+            AppLog.debug("初始化 baseline 已全部確認，現在送出 AUTO：07 00 01")
+        } else {
+            isAutomaticModeCommandPending = false
+            pendingAutomaticSuppressionTarget = nil
+            failInitializationSequence("AUTO 指令無法送出，請確認藍牙連線後再試一次。")
+        }
+    }
+
+    /// 標記初始化流程失敗並記錄錯誤訊息
+    /// - Parameter message: 錯誤提示字串
+    private func failInitializationSequence(_ message: String) {
+        enableAutoAfterPendingBaselineWrites = false
+        initializationAutoWaitingForModeSlot = false
+        isInitializationSequencePending = false
+        initializationSequenceSucceeded = false
+        initializationSequenceErrorMessage = message
+        AppLog.error(message)
     }
 
     /// 依據目標纜繩絕對長度發送初始基準校正設定
@@ -248,17 +374,31 @@ final class BluetoothViewModel: NSObject, ObservableObject {
         sendInitialTakeUpCm(takeUpCm)
     }
 
-    /// 設定智慧手套是否開啟全自動即時震顫抑制模式
-    /// - Parameter enabled: true 為開啟自動抑制，false 為關閉
+    /// 切換手套是否開啟全自動即時震顫抑制模式
+    /// - Parameter enabled: true 為開啟自動抑震，false 為手動模式
     func setAutomaticSuppression(_ enabled: Bool) {
         guard isConnected else {
             AppLog.error("略過模式切換：手套尚未連線完成。")
             isAutomaticSuppressionEnabled = false
+            isAutomaticModeCommandPending = false
+            pendingAutomaticSuppressionTarget = nil
             return
         }
 
-        isAutomaticSuppressionEnabled = enabled
-        bluetoothManager.sendAutomaticMode(enabled)
+        guard !isAutomaticModeCommandPending else {
+            AppLog.debug("AUTO / MANUAL 模式切換仍在等待 BLE 回覆，略過重複操作。")
+            return
+        }
+
+        pendingAutomaticSuppressionTarget = enabled
+        isAutomaticModeCommandPending = true
+
+        let queued = bluetoothManager.sendAutomaticMode(enabled)
+        if !queued {
+            AppLog.error("AUTO / MANUAL 指令未成功排入 BLE 傳送。")
+            isAutomaticModeCommandPending = false
+            pendingAutomaticSuppressionTarget = nil
+        }
     }
 }
 
@@ -290,9 +430,6 @@ extension BluetoothViewModel: BluetoothManagerDelegate {
             isConnected = true
             isScanning = false
             statusMessage = "手套已連線"
-
-            // 初次收到有效數據點時建立全新工作階段識別碼
-            DataViewModel.shared.currentSessionId = UUID().uuidString
         }
 
         pipeline.bluetoothManager(manager, didReceivePoints: points)
@@ -320,9 +457,21 @@ extension BluetoothViewModel: BluetoothManagerDelegate {
                 isBluetoothUnauthorized = true
                 isConnected = false
                 isScanning = false
+                isAutomaticSuppressionEnabled = false
+                isAutomaticModeCommandPending = false
+                pendingAutomaticSuppressionTarget = nil
+                pendingBaselineWriteCount = 0
+                isInitialLengthCommandPending = false
+                enableAutoAfterPendingBaselineWrites = false
+                initializationBaselineWriteFailed = false
+                initializationAutoWaitingForModeSlot = false
+                isInitializationSequencePending = false
+                initializationSequenceSucceeded = false
+                initializationSequenceErrorMessage = nil
                 statusMessage = "未取得藍牙權限"
                 scanTimeoutTask?.cancel()
                 pipeline.resetPipeline()
+                DataViewModel.shared.resetRawUploadBuffer(flushRemaining: true)
                 DataViewModel.shared.currentSessionId = UUID().uuidString
 
             case .poweredOff:
@@ -330,18 +479,120 @@ extension BluetoothViewModel: BluetoothManagerDelegate {
                 isBluetoothUnauthorized = false
                 isConnected = false
                 isScanning = false
+                isAutomaticSuppressionEnabled = false
+                isAutomaticModeCommandPending = false
+                pendingAutomaticSuppressionTarget = nil
+                pendingBaselineWriteCount = 0
+                isInitialLengthCommandPending = false
+                enableAutoAfterPendingBaselineWrites = false
+                initializationBaselineWriteFailed = false
+                initializationAutoWaitingForModeSlot = false
+                isInitializationSequencePending = false
+                initializationSequenceSucceeded = false
+                initializationSequenceErrorMessage = nil
                 statusMessage = "手機藍牙未開啟"
                 scanTimeoutTask?.cancel()
                 pipeline.resetPipeline()
+                DataViewModel.shared.resetRawUploadBuffer(flushRemaining: true)
                 DataViewModel.shared.currentSessionId = UUID().uuidString
 
             default:
                 isBluetoothPoweredOn = false
                 isConnected = false
                 isScanning = false
+                isAutomaticSuppressionEnabled = false
+                isAutomaticModeCommandPending = false
+                pendingAutomaticSuppressionTarget = nil
+                pendingBaselineWriteCount = 0
+                isInitialLengthCommandPending = false
+                enableAutoAfterPendingBaselineWrites = false
+                initializationBaselineWriteFailed = false
+                initializationAutoWaitingForModeSlot = false
+                isInitializationSequencePending = false
+                initializationSequenceSucceeded = false
+                initializationSequenceErrorMessage = nil
                 statusMessage = "藍牙準備中..."
                 pipeline.resetPipeline()
+                DataViewModel.shared.resetRawUploadBuffer(flushRemaining: true)
                 DataViewModel.shared.currentSessionId = UUID().uuidString
+            }
+        }
+    }
+
+    /// 接收硬體控制指令寫入結果回呼，處理模式確認與初始化長度串接狀態
+    /// - Parameters:
+    ///   - manager: 發送回呼之藍牙管理器實體
+    ///   - commandId: 執行寫入之指令識別碼
+    ///   - value: 該指令寫入之數值
+    ///   - success: 藍牙特徵值寫入是否成功
+    public func bluetoothManager(
+        _ manager: BluetoothManager,
+        didWriteControlCommand commandId: UInt8,
+        value: UInt16,
+        success: Bool
+    ) {
+        Task { @MainActor in
+            switch commandId {
+            case 0x07:
+                let requestedAuto = (value == 1)
+                isAutomaticModeCommandPending = false
+                pendingAutomaticSuppressionTarget = nil
+
+                if success {
+                    isAutomaticSuppressionEnabled = requestedAuto
+                    AppLog.debug(
+                        requestedAuto
+                            ? "AUTO 指令已由 BLE 確認送達 ESP32：07 00 01"
+                            : "MANUAL 指令已由 BLE 確認送達 ESP32：07 00 00"
+                    )
+                } else {
+                    AppLog.error("AUTO / MANUAL BLE 寫入失敗，App 保留原模式顯示。")
+                }
+
+                if isInitializationSequencePending && requestedAuto {
+                    if success {
+                        enableAutoAfterPendingBaselineWrites = false
+                        initializationAutoWaitingForModeSlot = false
+                        isInitializationSequencePending = false
+                        initializationSequenceSucceeded = true
+                        initializationSequenceErrorMessage = nil
+                        AppLog.debug("初始化流程完成：0x06 已確認，07 00 01 也已確認。")
+                    } else {
+                        failInitializationSequence("AUTO BLE 寫入失敗，初始化已停在 MANUAL。")
+                    }
+                    return
+                }
+
+                if isInitializationSequencePending && initializationAutoWaitingForModeSlot {
+                    startInitializationAutoIfPossible()
+                }
+
+            case 0x06:
+                if pendingBaselineWriteCount > 0 {
+                    pendingBaselineWriteCount -= 1
+                }
+                isInitialLengthCommandPending = pendingBaselineWriteCount > 0
+
+                if success {
+                    isAutomaticSuppressionEnabled = false
+                    AppLog.debug(
+                        "初始長度 0x06 已寫入 ESP32，baseline=\(value) mm；剩餘 pending=\(pendingBaselineWriteCount)"
+                    )
+                } else {
+                    initializationBaselineWriteFailed = true
+                    AppLog.error(
+                        "初始長度 0x06 BLE 寫入失敗，baseline=\(value) mm；剩餘 pending=\(pendingBaselineWriteCount)"
+                    )
+                }
+
+                if isInitializationSequencePending &&
+                    enableAutoAfterPendingBaselineWrites &&
+                    pendingBaselineWriteCount == 0 {
+                    startInitializationAutoIfPossible()
+                }
+
+            default:
+                break
             }
         }
     }
@@ -365,15 +616,37 @@ extension BluetoothViewModel: BluetoothManagerDelegate {
                 tremorStrengthRms = 0.0
                 isMotorEnabled = false
                 isAutomaticSuppressionEnabled = false
+                isAutomaticModeCommandPending = false
+                pendingAutomaticSuppressionTarget = nil
+                pendingBaselineWriteCount = 0
+                isInitialLengthCommandPending = false
+                enableAutoAfterPendingBaselineWrites = false
+                initializationBaselineWriteFailed = false
+                initializationAutoWaitingForModeSlot = false
+                isInitializationSequencePending = false
+                initializationSequenceSucceeded = false
+                initializationSequenceErrorMessage = nil
 
-                // 斷線時重設管線以防歷史資料污染下一個工作階段
                 pipeline.resetPipeline()
+                DataViewModel.shared.resetRawUploadBuffer(flushRemaining: true)
                 DataViewModel.shared.currentSessionId = UUID().uuidString
             } else {
-                // 重新連線時建立全新工作階段識別碼並恢復預設設定
                 DataViewModel.shared.currentSessionId = UUID().uuidString
+                pendingBaselineWriteCount = 0
+                isInitialLengthCommandPending = false
+                enableAutoAfterPendingBaselineWrites = false
+                initializationBaselineWriteFailed = false
+                initializationAutoWaitingForModeSlot = false
+                isInitializationSequencePending = false
+                initializationSequenceSucceeded = false
+                initializationSequenceErrorMessage = nil
                 isAutomaticSuppressionEnabled = false
-                bluetoothManager.sendAutomaticMode(false)
+                pendingAutomaticSuppressionTarget = false
+                isAutomaticModeCommandPending = bluetoothManager.sendAutomaticMode(false)
+                if !isAutomaticModeCommandPending {
+                    pendingAutomaticSuppressionTarget = nil
+                    AppLog.error("連線完成後的 MANUAL 初始化指令未成功排入 BLE 傳送。")
+                }
             }
 
             lengthOffsetMm = 0.0
