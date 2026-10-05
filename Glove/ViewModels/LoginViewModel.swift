@@ -31,6 +31,9 @@ final class LoginViewModel: ObservableObject {
     @Published var showSessionExpiredAlert: Bool = false
     @Published var sessionExpiredMessage: String = ""
 
+    /// App 啟動時是否正在嘗試恢復既有登入狀態
+    @Published var isRestoringSession = false
+    
     private let authRepository = AuthRepository()
     private var cancellables = Set<AnyCancellable>()
 
@@ -60,6 +63,72 @@ final class LoginViewModel: ObservableObject {
             }
             .store(in: &cancellables)
     }
+    
+    /// App 啟動時嘗試使用 Keychain 中既有 JWT 恢復登入狀態
+    /// - Parameter modelContext: SwiftData 上下文
+    func restoreSession(modelContext: ModelContext) async {
+        guard !isRestoringSession else { return }
+
+        // Keychain 沒有有效 Token，直接維持未登入狀態
+        guard AuthManager.shared.getToken() != nil else {
+            isAuthenticated = false
+            return
+        }
+
+        isRestoringSession = true
+        defer {
+            isRestoringSession = false
+        }
+
+        do {
+            // 後端目前沒有獨立 GET profile，
+            // 使用空的個人資料更新請求取得目前登入者最新資料
+            let profileDTO = try await authRepository.updateProfile(
+                request: UpdateProfileRequestDTO()
+            )
+
+            guard let profileDTO else {
+                AppLog.error("Session 恢復失敗：伺服器未回傳使用者資料")
+                return
+            }
+
+            let userModel = profileDTO.toModel()
+
+            // 清除記憶體中的舊使用者資料
+            let descriptor = FetchDescriptor<UserData>()
+
+            if let oldUsers = try? modelContext.fetch(descriptor) {
+                for user in oldUsers {
+                    modelContext.delete(user)
+                }
+            }
+
+            modelContext.insert(userModel)
+            try? modelContext.save()
+
+            self.userData = userModel
+            self.isAuthenticated = true
+
+            // 建立這次 App 啟動的新震顫資料 Session
+            DataViewModel.shared.currentSessionId = UUID().uuidString
+
+            AppLog.debug(
+                "已使用既有 JWT 恢復登入狀態 (User: \(userModel.userName))"
+            )
+
+        } catch NetworkError.unauthorized {
+            // 401 會由既有全域機制負責登出及顯示提示
+            AppLog.debug("Session Restore 驗證失敗，JWT 已失效")
+
+        } catch {
+            // 網路暫時失敗時不要刪 Token，
+            // 避免只是斷網就把仍有效的登入憑證清除
+            AppLog.error(
+                "Session Restore 失敗: \(error.localizedDescription)"
+            )
+        }
+    }
+    
     /// 載入與確認連動夥伴資料
     func loadPartnerIfNeeded() async {
         guard let role = userData?.role else { return }

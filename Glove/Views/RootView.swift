@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct RootView: View {
+    @Environment(\.modelContext) private var modelContext
     @StateObject private var loginVM = LoginViewModel()
     @StateObject private var dataVM = DataViewModel.shared
     @StateObject private var medVM = MedicationViewModel()
@@ -40,6 +41,21 @@ struct RootView: View {
                             }
                         )
                     }
+                } else if loginVM.isRestoringSession {
+                    VStack(spacing: 12) {
+                        ProgressView()
+
+                        Text("正在恢復登入狀態...")
+                            .font(.subheadline)
+                            .foregroundColor(
+                                AppTheme.textSecondary(for: colorScheme)
+                            )
+                    }
+                    .frame(
+                        maxWidth: .infinity,
+                        maxHeight: .infinity
+                    )
+
                 } else if loginVM.isAuthenticated {
                     NavigationBarView(
                         loginVM: loginVM,
@@ -79,6 +95,13 @@ struct RootView: View {
             if hasAcknowledgedNotice {
                 prepareAcknowledgedSession()
             }
+        }
+        .task(id: hasAcknowledgedNotice) {
+            guard hasAcknowledgedNotice else { return }
+
+            await loginVM.restoreSession(
+                modelContext: modelContext
+            )
         }
         .onChange(of: hasAcknowledgedNotice) { _, acknowledged in
             if acknowledged {
