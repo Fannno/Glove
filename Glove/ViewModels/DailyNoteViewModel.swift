@@ -17,39 +17,31 @@ final class DailyNoteViewModel: ObservableObject {
         loginVM.userData?.role == 0
     }
 
-    /// 心情選項清單
+    /// 支援的心情標籤選項清單
     let moods = ["開心", "平靜", "疲憊", "不舒服"]
 
-    /// 留言清單與查詢狀態
+    /// 留言清單、載入狀態、選定篩選日期、心情篩選識別碼與選定詳情便利貼
     @Published var notes: [DailyNote] = []
     @Published var isLoadingData = false
     @Published var selectedDate = Date()
     @Published var selectedMood: UUID? = nil
     @Published var selectedDetailNote: DailyNote? = nil
 
-    /// 新增便利貼暫存狀態
+    /// 新增便利貼表單之彈出狀態、輸入內容、心情標籤、照護者限定開關與卡片代表色
     @Published var showAddNoteSheet = false
     @Published var newNoteText = ""
     @Published var sheetSelectedMoodName: String? = nil
     @Published var isCaregiverOnly: Bool = false
-    @Published var noteColor: Color = Color(
-        red: 1.0,
-        green: 0.94,
-        blue: 0.8
-    )
+    @Published var noteColor: Color = Color(red: 1.0, green: 0.94, blue: 0.8)
 
-    /// 編輯便利貼暫存狀態
+    /// 編輯便利貼之目標實體、編輯文字、選定心情、照護者限定開關與卡片代表色
     @Published var editingNote: DailyNote? = nil
     @Published var editNoteText: String = ""
     @Published var editSelectedMoodName: String? = nil
     @Published var editIsCaregiverOnly: Bool = false
-    @Published var editNoteColor: Color = Color(
-        red: 1.0,
-        green: 0.94,
-        blue: 0.8
-    )
+    @Published var editNoteColor: Color = Color(red: 1.0, green: 0.94, blue: 0.8)
 
-    /// 初始化 ViewModel 並注入登入狀態管理器
+    /// 初始化檢視模型並注入登入狀態管理器
     /// - Parameter loginVM: 登入狀態與使用者資料的 ViewModel
     init(loginVM: LoginViewModel) {
         self.loginVM = loginVM
@@ -117,12 +109,12 @@ final class DailyNoteViewModel: ObservableObject {
         }
     }
 
-    /// 從遠端伺服器拉取最新便利貼資料，寫入本機 SwiftData 並更新畫面
+    /// 從遠端伺服器拉取最新便利貼資料
     /// - Parameters:
-    ///   - modelContext: SwiftData 資料庫操作上下文
-    ///   - isSilent: 是否採用靜默載入（不觸發全螢幕載入轉圈圈動畫）
+    ///   - modelContext: 資料操作內容物件（選填）
+    ///   - isSilent: 是否靜默載入，為 true 時不顯示載入指示器
     @MainActor
-    func loadAllNotes(modelContext: ModelContext, isSilent: Bool = false) async {
+    func loadAllNotes(modelContext: ModelContext? = nil, isSilent: Bool = false) async {
         if !isSilent {
             self.isLoadingData = true
         }
@@ -137,49 +129,25 @@ final class DailyNoteViewModel: ObservableObject {
 
         do {
             let remoteNotes = try await dailyRepo.fetchAllDailies()
-
-            let descriptor = FetchDescriptor<DailyNote>()
-            if let oldNotes = try? modelContext.fetch(descriptor) {
-                for note in oldNotes {
-                    modelContext.delete(note)
-                }
-            }
-
-            for note in remoteNotes {
-                modelContext.insert(note)
-            }
-
-            try? modelContext.save()
             self.notes = remoteNotes
-
         } catch {
             let errorMsg = error.localizedDescription
             AppLog.error("載入便利貼失敗: \(errorMsg)")
 
             if errorMsg.contains("401") || errorMsg.contains("已在其他裝置登入") || errorMsg.contains("登入已失效") {
                 self.notes = []
-                isLoadingData = false
-                return
-            }
-
-            let descriptor = FetchDescriptor<DailyNote>(
-                sortBy: [SortDescriptor(\.date, order: .reverse)]
-            )
-            if let cachedNotes = try? modelContext.fetch(descriptor) {
-                self.notes = cachedNotes
             }
         }
         isLoadingData = false
     }
 
-    /// 發送新建立之便利貼，寫入本機資料庫並非同步上傳至伺服器
-    /// - Parameter modelContext: SwiftData 容器操作環境
+    /// 發送新建立之便利貼，並非同步上傳至伺服器
+    /// - Parameter modelContext: 資料操作內容物件（選填）
     @MainActor
-    func sendNote(modelContext: ModelContext) async {
+    func sendNote(modelContext: ModelContext? = nil) async {
         guard canSendNote else { return }
 
         let trimmedContent = newNoteText.trimmingCharacters(in: .whitespacesAndNewlines)
-
         let newDaily = DailyNote(
             userID: loginVM.userData?.userID ?? 0,
             content: trimmedContent,
@@ -189,9 +157,6 @@ final class DailyNoteViewModel: ObservableObject {
             moodName: sheetSelectedMoodName,
             isCaregiverOnly: isCaregiverOnly
         )
-
-        modelContext.insert(newDaily)
-        try? modelContext.save()
 
         if !trimmedContent.isEmpty {
             self.notes.insert(newDaily, at: 0)
@@ -218,7 +183,7 @@ final class DailyNoteViewModel: ObservableObject {
     }
 
     /// 編輯便利貼：載入目標資料至表單
-    /// - Parameter note: 欲修改的 Daily 實體
+    /// - Parameter note: 欲修改的 DailyNote 實體
     func startEditing(_ note: DailyNote) {
         self.editingNote = note
         self.editNoteText = note.content
@@ -227,20 +192,17 @@ final class DailyNoteViewModel: ObservableObject {
         self.editIsCaregiverOnly = note.isCaregiverOnly ?? false
     }
 
-    /// 儲存編輯內容：更新本機實體與遠端資料庫（若文字清空則移出留言看板）
-    /// - Parameter modelContext: SwiftData 資料庫操作上下文
+    /// 儲存編輯內容，並同步至遠端伺服器
+    /// - Parameter modelContext: 資料操作內容物件（選填）
     @MainActor
-    func saveEditedNote(modelContext: ModelContext) async {
+    func saveEditedNote(modelContext: ModelContext? = nil) async {
         guard let note = editingNote, canSaveEditedNote else { return }
 
         let trimmedContent = editNoteText.trimmingCharacters(in: .whitespacesAndNewlines)
-
         note.content = trimmedContent
         note.colorHex = editNoteColor.toHex() ?? "#FFF0CC"
         note.moodName = editSelectedMoodName
         note.isCaregiverOnly = editIsCaregiverOnly
-
-        try? modelContext.save()
 
         if let index = notes.firstIndex(where: { $0.id == note.id }) {
             notes[index] = note
@@ -265,17 +227,14 @@ final class DailyNoteViewModel: ObservableObject {
         }
     }
 
-    /// 刪除便利貼：移除本機快取與遠端資料
+    /// 刪除便利貼：自記憶體清單中移除並發送伺服器刪除請求
     /// - Parameters:
-    ///   - note: 欲刪除的 Daily 實體
-    ///   - modelContext: SwiftData 資料庫操作上下文
+    ///   - note: 欲刪除的 DailyNote 實體
+    ///   - modelContext: 資料操作內容物件（選填）
     @MainActor
-    func deleteNote(note: DailyNote, modelContext: ModelContext) async {
+    func deleteNote(note: DailyNote, modelContext: ModelContext? = nil) async {
         let noteID = note.id
-
         notes.removeAll { $0.id == noteID }
-        modelContext.delete(note)
-        try? modelContext.save()
 
         do {
             try await dailyRepo.removeDailyRecord(recordID: noteID)
@@ -302,11 +261,7 @@ final class DailyNoteViewModel: ObservableObject {
     ///   - maxCharacters: 允許輸入的最大字元數
     ///   - maxLines: 允許輸入的最大行數
     /// - Returns: 符合規範的安全裁剪字串
-    private func limitLinesAndLength(
-        text: String,
-        maxCharacters: Int,
-        maxLines: Int
-    ) -> String {
+    private func limitLinesAndLength(text: String, maxCharacters: Int, maxLines: Int) -> String {
         let lines = text.components(separatedBy: "\n")
         if lines.count > maxLines {
             let allowedLines = lines.prefix(maxLines)
