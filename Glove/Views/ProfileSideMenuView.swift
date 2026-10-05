@@ -211,12 +211,16 @@ struct ProfileSideMenuView: View {
                     MenuRow(icon: "gearshape", title: "家屬連動設定")
                 }
 
-                NavigationLink(destination: AboutUsView()) {
-                    MenuRow(icon: "info.circle", title: "關於我們")
-                }
-
                 NavigationLink(destination: UserGuideView()) {
                     MenuRow(icon: "book.closed", title: "系統操作說明")
+                }
+                
+                NavigationLink(destination: ResearchNoticeView()) {
+                    MenuRow(icon: "doc.text", title: "使用告知與研究限制")
+                }
+                
+                NavigationLink(destination: AboutUsView()) {
+                    MenuRow(icon: "info.circle", title: "關於我們")
                 }
             }
             .padding(.horizontal, 16)
