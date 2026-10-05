@@ -100,9 +100,6 @@ struct MedicationView: View {
             ImagePreview(image: item.image) { previewImage = nil }
                 .background(BackgroundClearView())
         }
-        .onAppear {
-            dataVM.bindPipeline(bleVM.pipeline)
-        }
         .task {
             let selectedDateString = filterDate.toString(format: "yyyy-MM-dd")
             await medVM.loadRecords(for: selectedDateString)
@@ -123,41 +120,45 @@ struct MedicationView: View {
 
     /// 頂部主標題與日期快速篩選工具列
     private var medicationHeaderBar: some View {
-        HStack(alignment: .firstTextBaseline) {
-            HStack(spacing: 8) {
-                Text(!isPatient ? "\(loginVM.partnerName) 的健康與用藥" : "健康與用藥管理")
-                    .font(.system(size: 26, weight: .bold))
-                    .foregroundColor(AppTheme.textPrimary(for: colorScheme))
-            }
-            .padding(.horizontal, 12)
-            .padding(.top, 7)
-            Spacer()
-            HStack(spacing: 6) {
+        HStack(alignment: .center, spacing: 6) {
+            Text(!isPatient ? "\(loginVM.partnerName) 的健康與用藥" : "健康與用藥管理")
+                .font(.system(size: 26, weight: .bold))
+                .foregroundColor(AppTheme.textPrimary(for: colorScheme))
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                .padding(.horizontal, 12)
+
+            Spacer(minLength: 2)
+
+            HStack(spacing: 0) {
                 DatePicker("", selection: $filterDate, in: ...Date(), displayedComponents: .date)
                     .labelsHidden()
-                    .transformEffect(.init(scaleX: 0.9, y: 0.9))
+                    .transformEffect(.init(scaleX: 0.85, y: 0.85))
+
                 if !isViewingToday {
                     Button {
                         returnToToday()
                     } label: {
-                        HStack(spacing: 3) {
+                        HStack(spacing: 2) {
                             Image(systemName: "arrow.uturn.backward")
                             Text("今天")
                         }
                         .font(.caption2.bold())
                         .foregroundColor(AppTheme.primary(for: colorScheme))
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 5)
+                        .padding(.horizontal, 3)
+                        .padding(.vertical, 7)
                         .background(AppTheme.primary(for: colorScheme).opacity(0.1))
                         .cornerRadius(6)
+                        .fixedSize(horizontal: true, vertical: false)
                     }
                     .buttonStyle(.plain)
                 }
             }
+            .padding(.trailing, 4)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 4)
-        .background(Color.clear)
+        .padding(.horizontal, 4)
+        .padding(.top, 8)
+        .padding(.bottom, 4)
     }
 
     /// 重設篩選條件並回到當前日期與單日檢視模式
