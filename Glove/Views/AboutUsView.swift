@@ -2,6 +2,8 @@ import Foundation
 import SwiftUI
 
 struct AboutUsView: View {
+    @Environment(\.colorScheme) private var colorScheme
+
     var body: some View {
         ScrollView(.vertical, showsIndicators: false) {
             VStack(spacing: 16) {
@@ -10,13 +12,14 @@ struct AboutUsView: View {
                 introCard
                 featuresCard
                 disclaimerCard
+                contactCard
                 footerSection
             }
             .padding(.horizontal, 16)
             .padding(.top, 12)
             .padding(.bottom, 32)
         }
-        .background(Color(uiColor: .systemGroupedBackground))
+        .background(AppTheme.background(for: colorScheme))
         .navigationTitle("關於我們")
         .navigationBarTitleDisplayMode(.inline)
     }
@@ -28,15 +31,12 @@ struct AboutUsView: View {
                 .scaledToFit()
                 .frame(width: 72, height: 72)
                 .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-
+                .foregroundColor(AppTheme.textPrimary(for: colorScheme))
+            
             VStack(spacing: 4) {
                 Text("SteadyHope")
                     .font(.system(size: 22, weight: .bold, design: .rounded))
-                    .foregroundColor(.primary)
-
-                Text("智慧震顫追蹤與遠距照護輔助系統")
-                    .font(.system(size: 13))
-                    .foregroundColor(.secondary)
+                    .foregroundColor(AppTheme.primary(for: colorScheme))
             }
         }
         .frame(maxWidth: .infinity)
@@ -48,17 +48,17 @@ struct AboutUsView: View {
             HStack {
                 Text("版本紀錄")
                     .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(.primary)
+                    .foregroundColor(AppTheme.textPrimary(for: colorScheme))
 
                 Spacer()
 
                 Text("v\(AppConfig.appVersion)")
                     .font(.system(size: 13, design: .rounded))
-                    .foregroundColor(.secondary)
+                    .foregroundColor(AppTheme.textPrimary(for: colorScheme).opacity(0.6))
 
                 Image(systemName: "chevron.right")
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(Color(uiColor: .tertiaryLabel))
+                    .foregroundColor(AppTheme.textPrimary(for: colorScheme).opacity(0.35))
             }
         }
         .buttonStyle(.plain)
@@ -69,12 +69,22 @@ struct AboutUsView: View {
         VStack(alignment: .leading, spacing: 10) {
             Text("系統簡介")
                 .font(.system(size: 16, weight: .bold))
-                .foregroundColor(.primary)
+                .foregroundColor(AppTheme.primary(for: colorScheme))
 
-            Text("SteadyHope 是專為動作障礙患者及其家庭照護者打造的智慧遠距健康管理系統。透過穿戴式手套與行動端應用程式的整合，將傳統仰賴主觀陳述的發作表徵轉化為客觀的連續數據。\n\n系統整合低功耗藍牙傳輸、主動抑震致動、連續震顫強度（RMS）與頻譜（PSD）特徵運算、用藥處方與穿皮貼片輪替追蹤、突發表徵紀錄，以及動作障礙自我評估量表。結合 AI 摘要技術，可產出標準 A4 醫療級圖表報告，協助醫病雙方建立客觀且具延續性的問診方針。")
-                .font(.system(size: 13.5))
-                .foregroundColor(.secondary)
-                .lineSpacing(5)
+            Text(
+                """
+                SteadyHope 是專題研究原型，結合穿戴式手套與行動端應用程式，記錄手部動作訊號與日常健康資料，協助使用者及照護者進行居家觀察與回診溝通。
+
+                系統整合低功耗藍牙傳輸、馬達控制狀態、連續震顫強度（RMS）與頻譜（PSD）特徵分析、用藥紀錄、突發表徵紀錄，以及自我評估量表。
+
+                系統亦提供 AI 回診前摘要與 A4 格式報告匯出，將不同來源的紀錄整理成較容易閱讀的時間範圍資料，供日常觀察與醫病溝通參考。
+
+                本系統目前仍屬研究原型，患者震顫辨識、配戴安全性及抑震效果尚未完成完整驗證。
+                """
+            )
+            .font(.system(size: 13.5))
+            .foregroundColor(AppTheme.textPrimary(for: colorScheme).opacity(0.75))
+            .lineSpacing(5)
         }
         .modifier(CardModifier())
     }
@@ -83,47 +93,47 @@ struct AboutUsView: View {
         VStack(alignment: .leading, spacing: 14) {
             Text("主要特色")
                 .font(.system(size: 16, weight: .bold))
-                .foregroundColor(.primary)
+                .foregroundColor(AppTheme.primary(for: colorScheme))
 
             VStack(spacing: 12) {
                 featureRow(
                     title: "智慧手套與即時震顫特徵分析",
-                    desc: "低功耗藍牙連線、馬達抑震監控、機械長度微調（-5cm 至 +5cm），即時運算 RMS 強度與 PSD 頻譜波峰，支援發作事件情境標籤歸檔。"
+                    desc: "透過低功耗藍牙取得角速度資料，支援馬達控制狀態記錄，並分析 4–6 Hz RMS 強度與 3–7 Hz 頻率特徵。"
                 )
 
                 Divider()
 
                 featureRow(
-                    title: "彈性處方排程與穿皮貼片防呆輪替",
-                    desc: "支援多時段常規口服處方設定與打卡推播；專為穿皮貼片提供 14 天黏貼部位防呆警示、患部膚況拍照記錄與 30 秒按壓倒數引導。"
+                    title: "彈性處方排程與穿皮貼片追蹤",
+                    desc: "支援多時段用藥排程與紀錄，以及穿皮貼片輪替提醒、部位紀錄與使用流程引導。"
                 )
 
                 Divider()
 
                 featureRow(
                     title: "日常表徵影音牆與生理徵象監控",
-                    desc: "文字與相片記錄肢體突發表徵（支援最多 5 張相片與貼文牆瀏覽檢視），同時追蹤血壓、血糖、體溫、體重、睡眠時數與飲食份量。"
+                    desc: "支援文字、相片及影片相關表徵紀錄，同時整理血壓、血糖、體溫、體重等生理數值。"
                 )
 
                 Divider()
 
                 featureRow(
-                    title: "臨床動作障礙多維度自我評估量表",
-                    desc: "參考臺灣動作障礙學會指引，提供 1 分鐘快篩、主題分類篩檢及完整 25 題每週評估表，涵蓋情緒、生活自理與動作功能，提交後自動銷除提醒。"
+                    title: "動作障礙自我評估量表",
+                    desc: "提供不同形式的自我評估紀錄，整理情緒、日常生活與動作相關項目的填寫結果，方便進行時間趨勢比較。"
                 )
 
                 Divider()
 
                 featureRow(
                     title: "家庭雙向照護連動與心情便利貼",
-                    desc: "配對碼安全連動與照護者權限控管；家庭心情留言板支援 100 字限制、病患心情與留言擇一選填，以及「僅照護者查看」私密備忘功能。"
+                    desc: "支援配對碼連動、照護者權限控管與心情留言板，並提供私密備忘功能。"
                 )
 
                 Divider()
 
                 featureRow(
-                    title: "AI 門診摘要與 A4 醫療級 PDF 報告",
-                    desc: "AI 聊天室支援關鍵字與日曆檢索；回診前兩步驟快速生成溝通摘要，一鍵匯出包含 RMS 連續折線圖（0.20 警戒線）與每小時 PSD 頻譜圖之標準報告。"
+                    title: "AI 回診前摘要 PDF 報告",
+                    desc: "支援關鍵字與日期範圍整理，並匯出包含 RMS 趨勢、PSD 頻率分布及日常紀錄的 A4 格式報告。"
                 )
             }
         }
@@ -134,28 +144,26 @@ struct AboutUsView: View {
         VStack(alignment: .leading, spacing: 4) {
             Text(title)
                 .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(.primary)
+                .foregroundColor(AppTheme.textPrimary(for: colorScheme))
 
             Text(desc)
                 .font(.system(size: 12.5))
-                .foregroundColor(.secondary)
+                .foregroundColor(AppTheme.textPrimary(for: colorScheme).opacity(0.75))
                 .lineSpacing(3)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    // MARK: - 資料來源與免責聲明
-
     private var disclaimerCard: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("資料來源與免責聲明")
                 .font(.system(size: 16, weight: .bold))
-                .foregroundColor(.primary)
+                .foregroundColor(AppTheme.primary(for: colorScheme))
 
             VStack(spacing: 12) {
                 disclaimerSection(
                     title: "用藥清單與衛教資訊來源",
-                    content: "本系統內建之用藥清單、藥品資料庫及相關衛教內容，主要源自「巴金森寶典」應用程式。該資料庫由臺大醫院巴金森症暨動作障礙中心，以及台灣巴金森之友協會共同合作開發，並經由神經內科主治醫師、專業藥師等醫療團隊進行嚴格審定與維護，以確保提供正確且具公信力之醫藥指引。"
+                    content: "本系統內建之用藥清單、藥品資料庫及相關衛教內容，主要源自「巴金森寶典」應用程式。該資料庫由臺大醫院巴金森症暨動作障礙中心，以及台灣巴金森之友協會共同合作開發，相關內容經醫療專業團隊審定與維護。"
                 )
 
                 Divider()
@@ -168,8 +176,15 @@ struct AboutUsView: View {
                 Divider()
 
                 disclaimerSection(
-                    title: "醫療免責聲明",
-                    content: "本系統所提供之震顫特徵運算數據、生理徵象紀錄、量表評估結果與 AI 生成之衛教摘要，純屬日常健康管理與門診醫病溝通之輔助參考，不具備任何醫療診斷、處方推薦或法定醫療器材效力，亦無法取代專業醫師之臨床診斷。若使用者有實際醫療、診斷或處方用藥調整需求，請務必尋求合格醫療院所及專科醫師之專業協助。"
+                    title: "研究原型限制",
+                    content: "本系統目前為專題研究原型。患者震顫辨識、裝置配戴安全性、控制反應及抑震效果尚未完成完整驗證。日常動作可能造成額外裝置作動，也可能在出現震顫時未觸發。"
+                )
+
+                Divider()
+
+                disclaimerSection(
+                    title: "資料與醫療使用限制",
+                    content: "本系統所提供之震顫特徵、生理數值、量表結果及 AI 摘要，僅供日常健康管理與門診溝通參考，不可作為醫療診斷、疾病嚴重度判定或自行調整藥物的依據。服藥前後的圖表差異亦不能單獨證明藥物療效或病程變化。"
                 )
             }
         }
@@ -180,40 +195,70 @@ struct AboutUsView: View {
         VStack(alignment: .leading, spacing: 4) {
             Text(title)
                 .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(.primary)
+                .foregroundColor(AppTheme.textPrimary(for: colorScheme))
 
             Text(content)
                 .font(.system(size: 12))
-                .foregroundColor(.secondary)
+                .foregroundColor(AppTheme.textPrimary(for: colorScheme).opacity(0.75))
                 .lineSpacing(4)
         }
+    }
+
+    private var contactCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("聯絡我們")
+                .font(.system(size: 16, weight: .bold))
+                .foregroundColor(AppTheme.primary(for: colorScheme))
+
+            Text("淡江大學資訊管理學系")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(AppTheme.textPrimary(for: colorScheme))
+
+            Text("電話：02-2621-5656")
+                .font(.system(size: 13.5))
+                .foregroundColor(AppTheme.textPrimary(for: colorScheme).opacity(0.75))
+                .textSelection(.enabled)
+
+            Text("電子信箱：tkumisassistant@gmail.com")
+                .font(.system(size: 13.5))
+                .foregroundColor(AppTheme.textPrimary(for: colorScheme).opacity(0.75))
+                .textSelection(.enabled)
+
+            (
+                Text("地址：新北市淡水區英專路151號")
+                + Text("商管大樓11樓 (B1111)").bold()
+            )
+                .font(.system(size: 13.5))
+                .foregroundColor(AppTheme.textPrimary(for: colorScheme).opacity(0.75))
+                .textSelection(.enabled)
+        }
+        .modifier(CardModifier())
     }
 
     private var footerSection: some View {
         VStack(spacing: 4) {
             Text("SteadyHope")
                 .font(.system(size: 11, weight: .medium, design: .rounded))
-                .foregroundColor(.secondary)
+                .foregroundColor(AppTheme.textPrimary(for: colorScheme).opacity(0.6))
 
             Text("All Rights Reserved © 2026")
                 .font(.system(size: 10))
-                .foregroundColor(Color(uiColor: .tertiaryLabel))
+                .foregroundColor(AppTheme.textPrimary(for: colorScheme).opacity(0.35))
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 8)
     }
 }
 
-/// 通用資訊卡片視圖修飾器，統一設定內距、白色背景、圓角與微光陰影
 struct CardModifier: ViewModifier {
-    /// 定義修飾器對應內容之套用樣式
-    /// - Parameter content: 原始視圖內容
-    /// - Returns: 套用卡片外觀修飾後之視圖
+    @Environment(\.colorScheme) private var colorScheme
+
     func body(content: Content) -> some View {
         content
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color(uiColor: .secondarySystemGroupedBackground))
+            .background(AppTheme.cardBackground(for: colorScheme))
             .cornerRadius(12)
+            .softCardShadow()
     }
 }
