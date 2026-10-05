@@ -10,6 +10,24 @@
 
 ---
 
+## [Unreleased]
+
+### Fixed
+
+- 統一震顫資料使用的 `DataViewModel` 實例，避免 BLE Pipeline 與畫面使用不同資料來源。
+- 集中處理 401 Unauthorized 登出流程，移除重複的 Session 失效監聽。
+
+### Changed
+
+- 整理 iOS 專案支援平台設定，移除未使用的平台設定。
+- 移除 `LoginViewModel` 未使用的震顫資料依賴。
+
+### Security
+
+- 將 JWT Token 由 `UserDefaults` 改為 iOS Keychain 安全儲存。
+- 保留既有 24 小時登入有效期限判斷。
+- 支援舊版 Token 自動遷移至 Keychain，避免更新後需要重新登入。
+
 ## [1.0.1] - 2026-10-05
 
 ### Added
