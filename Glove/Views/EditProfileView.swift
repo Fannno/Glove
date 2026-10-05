@@ -348,7 +348,7 @@ struct EditProfileView: View {
             
             VStack(spacing: 12) {
                 customSecureField(title: "目前舊密碼", text: $oldPassword, placeholder: "變更密碼時必填")
-                customSecureField(title: "新密碼", text: $newPassword, placeholder: "至少 6 位字元")
+                customSecureField(title: "新密碼", text: $newPassword, placeholder: "需至少8碼且包含大小寫英文字母")
                 customSecureField(title: "確認新密碼", text: $confirmNewPassword, placeholder: "再次輸入新密碼")
                 
                 if !newPassword.isEmpty && !confirmNewPassword.isEmpty && newPassword != confirmNewPassword {
