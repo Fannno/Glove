@@ -136,6 +136,7 @@ final class LoginViewModel: ObservableObject {
                 for user in oldUsers {
                     modelContext.delete(user)
                 }
+                try? modelContext.save()
             }
 
             // 處理並保存使用者資料至 SwiftData

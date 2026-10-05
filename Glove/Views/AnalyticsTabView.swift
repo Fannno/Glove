@@ -6,11 +6,10 @@ struct AnalyticsTabView: View {
     @ObservedObject var medVM: MedicationViewModel
     @ObservedObject var dataVM: DataViewModel
     @Environment(\.colorScheme) private var colorScheme
-
     @Binding var selectedDate: Date
 
-    // 縮放、平移與視窗狀態
-    @State private var visibleDuration: TimeInterval = 4 * 3600 // 預設 4 小時視窗
+    /// 圖表可視範圍時段長度、縮放平移手勢與捲動位置狀態
+    @State private var visibleDuration: TimeInterval = 4 * 3600
     @State private var zoomBaseDuration: TimeInterval = 4 * 3600
     @State private var chartScrollPosition: Date = Date()
     @State private var hasInitializedScrollPosition: Bool = false
@@ -18,15 +17,17 @@ struct AnalyticsTabView: View {
     @State private var isPinching: Bool = false
     @State private var dragStartScrollPosition: Date? = nil
 
-    // 日期與時間選取跳轉狀態
+    /// 時間選取彈窗顯示、目標時間與手動選定標記狀態
     @State private var showTimePicker: Bool = false
     @State private var selectedChartTime: Date = Date()
     @State private var hasSelectedSpecificTime: Bool = false
 
-    // 原地選取狀態
+    /// 原地單擊選取之資料點時間、強度數值與自動追隨節流時間戳記
     @State private var selectedPointDate: Date? = nil
     @State private var selectedPointRMS: Double? = nil
+    @State private var lastAutoFollowUpdate: Date = .distantPast
 
+    /// 圖表可視時長極限與圖表元件高度常數
     private let minimumVisibleDuration: TimeInterval = 5 * 60
     private let maximumVisibleDuration: TimeInterval = 24 * 60 * 60
     private let chartHeight: CGFloat = 285
@@ -38,74 +39,185 @@ struct AnalyticsTabView: View {
         return calendar
     }
 
+    /// 判斷目前選取之日期是否為今日
     private var isViewingToday: Bool {
         taipeiCalendar.isDateInToday(selectedDate)
     }
 
+    /// 選定日之起始時間（00:00:00）
     private var dayStart: Date {
         taipeiCalendar.startOfDay(for: selectedDate)
     }
 
+    /// 選定日之結束時間（若為今日則取當前時間，非今日則取隔日零時）
     private var dayEnd: Date {
         let tomorrow = taipeiCalendar.date(byAdding: .day, value: 1, to: dayStart)
             ?? dayStart.addingTimeInterval(24 * 60 * 60)
         return isViewingToday ? min(tomorrow, Date()) : tomorrow
     }
 
+    /// 當日最後一個有效秒數時間點
     private var dayLastSecond: Date {
         isViewingToday ? Date() : dayEnd.addingTimeInterval(-1)
     }
 
+    /// 限制在最大與最小允許範圍內的可視時長
     private var clampedVisibleDuration: TimeInterval {
         min(max(visibleDuration, minimumVisibleDuration), maximumVisibleDuration)
     }
 
+    /// 圖表捲動位置允許之最大左邊界起始時間
     private var maxLeadingDate: Date {
         max(dayStart, dayEnd.addingTimeInterval(-clampedVisibleDuration))
     }
 
+    /// 經過邊界限制過濾後之圖表捲動位置
     private var clampedChartScrollPosition: Date {
         min(max(chartScrollPosition, dayStart), maxLeadingDate)
     }
 
+    /// 圖表可視範圍的結束時間點
     private var visibleEndDate: Date {
         min(clampedChartScrollPosition.addingTimeInterval(clampedVisibleDuration), dayEnd)
     }
 
-    // 資料緩衝區過濾
-    private var bufferedTremorPoints: [DataViewModel.RMSTrendPoint] {
-        let buffer = max(clampedVisibleDuration * 0.5, 60)
-        let start = clampedChartScrollPosition.addingTimeInterval(-buffer)
-        let end = visibleEndDate.addingTimeInterval(buffer)
+    /// 包含前後緩衝之資料擷取時間區間
+    private var bufferedRange: (start: Date, end: Date) {
+        let buffer = min(max(clampedVisibleDuration * 0.05, 60), 5 * 60)
+        return (
+            clampedChartScrollPosition.addingTimeInterval(-buffer),
+            visibleEndDate.addingTimeInterval(buffer)
+        )
+    }
 
-        return dataVM.rmsTrendHistory.filter {
-            $0.timestamp >= start && $0.timestamp <= end
+    /// 利用二分搜尋快速切片指定時段範圍之走勢點陣列
+    /// - Parameters:
+    ///   - points: 依時間遞增排序之走勢資料陣列
+    ///   - start: 擷取起始時間
+    ///   - end: 擷取結束時間
+    /// - Returns: 切片後的資料點陣列
+    private func trendSlice(
+        _ points: [DataViewModel.RMSTrendPoint],
+        start: Date,
+        end: Date
+    ) -> [DataViewModel.RMSTrendPoint] {
+        guard !points.isEmpty else { return [] }
+
+        var low = 0
+        var high = points.count
+        while low < high {
+            let mid = (low + high) / 2
+            if points[mid].timestamp < start {
+                low = mid + 1
+            } else {
+                high = mid
+            }
+        }
+        let lower = low
+
+        low = lower
+        high = points.count
+        while low < high {
+            let mid = (low + high) / 2
+            if points[mid].timestamp <= end {
+                low = mid + 1
+            } else {
+                high = mid
+            }
+        }
+        let upper = low
+
+        guard lower < upper else { return [] }
+        return Array(points[lower..<upper])
+    }
+
+    /// 經緩衝範圍過濾且排除非數值之震顫走勢資料點
+    private var bufferedTremorPoints: [DataViewModel.RMSTrendPoint] {
+        let range = bufferedRange
+        return trendSlice(
+            dataVM.rmsTrendHistory,
+            start: range.start,
+            end: range.end
+        ).filter {
+            $0.rmsValue.isFinite && !$0.rmsValue.isNaN
         }
     }
 
+    /// 對走勢資料點進行桶狀極值降採樣以減輕繪圖負載
+    /// - Parameters:
+    ///   - points: 原始資料點陣列
+    ///   - maxCount: 目標最大取樣點數
+    /// - Returns: 降採樣後之資料點陣列
+    private func downsampleTrend(
+        _ points: [DataViewModel.RMSTrendPoint],
+        maxCount: Int
+    ) -> [DataViewModel.RMSTrendPoint] {
+        guard points.count > maxCount, maxCount >= 4 else {
+            return points
+        }
+
+        let bucketCount = max(1, maxCount / 2)
+        let bucketSize = Int(ceil(Double(points.count) / Double(bucketCount)))
+        var result: [DataViewModel.RMSTrendPoint] = []
+        result.reserveCapacity(maxCount)
+
+        var startIndex = 0
+        while startIndex < points.count {
+            let endIndex = min(startIndex + bucketSize, points.count)
+            let bucket = points[startIndex..<endIndex]
+
+            guard let minPoint = bucket.min(by: { $0.rmsValue < $1.rmsValue }),
+                  let maxPoint = bucket.max(by: { $0.rmsValue < $1.rmsValue })
+            else {
+                startIndex = endIndex
+                continue
+            }
+
+            if minPoint.timestamp <= maxPoint.timestamp {
+                result.append(minPoint)
+                if minPoint.id != maxPoint.id {
+                    result.append(maxPoint)
+                }
+            } else {
+                result.append(maxPoint)
+                if minPoint.id != maxPoint.id {
+                    result.append(minPoint)
+                }
+            }
+            startIndex = endIndex
+        }
+        return result
+    }
+
+    /// 選定日當日之全部服藥紀錄清單
     private var todayMedications: [MedicationRecord] {
         medVM.medicationList.filter {
             $0.date >= dayStart && $0.date <= dayEnd
         }
     }
 
+    /// 經可視緩衝範圍過濾後之服藥紀錄清單
     private var bufferedMedications: [MedicationRecord] {
         let buffer = max(clampedVisibleDuration * 0.5, 60)
         let start = clampedChartScrollPosition.addingTimeInterval(-buffer)
         let end = visibleEndDate.addingTimeInterval(buffer)
-
         return todayMedications.filter {
             $0.date >= start && $0.date <= end
         }
     }
 
-    private var dynamicMaxY: Double {
-        let values = bufferedTremorPoints.map(\.rmsValue).filter { $0.isFinite && !$0.isNaN }
-        guard let maximum = values.max(), maximum > 0 else { return 0.5 }
+    /// 計算給定走勢資料之 Y 軸安全最大刻度值
+    /// - Parameter points: 待分析之走勢資料陣列
+    /// - Returns: 圖表適用的 Y 軸上限值
+    private func maxY(for points: [DataViewModel.RMSTrendPoint]) -> Double {
+        let values = points.map(\.rmsValue).filter { $0.isFinite && !$0.isNaN }
+        guard let maximum = values.max(), maximum > 0 else {
+            return 0.5
+        }
         return max(0.5, maximum * 1.25)
     }
 
-    // 動態 X 軸刻度
+    /// 根據當前可視長度動態調整 X 軸刻度間距秒數
     private var xAxisStride: TimeInterval {
         switch clampedVisibleDuration {
         case ...300: return 60
@@ -119,18 +231,17 @@ struct AnalyticsTabView: View {
         }
     }
 
+    /// 當前可視時段內所有 X 軸標籤時間刻度陣列
     private var visibleXAxisTicks: [Date] {
         let step = xAxisStride
         let startInterval = clampedChartScrollPosition.timeIntervalSince1970
         let endInterval = visibleEndDate.timeIntervalSince1970
-
         let bufferedStart = max(dayStart.timeIntervalSince1970, startInterval - step)
         let bufferedEnd = min(dayEnd.timeIntervalSince1970, endInterval + step)
         let alignedStart = floor(bufferedStart / step) * step
 
         var current = alignedStart
         var ticks: [Date] = []
-
         while current <= bufferedEnd {
             let date = Date(timeIntervalSince1970: current)
             if date >= dayStart && date <= dayEnd {
@@ -141,6 +252,9 @@ struct AnalyticsTabView: View {
         return ticks
     }
 
+    /// 格式化指定時間在 X 軸上之文字呈現
+    /// - Parameter date: 刻度日期時間
+    /// - Returns: 時間字串
     private func xAxisLabel(for date: Date) -> String {
         switch clampedVisibleDuration {
         case ...1800:
@@ -152,6 +266,7 @@ struct AnalyticsTabView: View {
         }
     }
 
+    /// 圖表可視範圍中央對應之時間點
     private var visibleHeaderTime: Date {
         let center = clampedChartScrollPosition.addingTimeInterval(clampedVisibleDuration * 0.5)
         return min(max(center, dayStart), dayLastSecond)
@@ -196,16 +311,18 @@ struct AnalyticsTabView: View {
             timePickerNavigationStack
         }
         .onAppear {
-            dataVM.selectedFilterDate = selectedDate
-            Task {
-                await dataVM.loadTremorHistory()
+            if !taipeiCalendar.isDate(dataVM.selectedFilterDate, inSameDayAs: selectedDate) {
+                dataVM.selectedFilterDate = selectedDate
+            } else if dataVM.rmsTrendHistory.isEmpty && !dataVM.isHistoryLoading {
+                Task {
+                    await dataVM.loadTremorHistory()
+                }
             }
             initializeScrollPositionIfNeeded()
         }
         .onChange(of: selectedDate) { _, newDate in
-            dataVM.selectedFilterDate = newDate
-            Task {
-                await dataVM.loadTremorHistory()
+            if !taipeiCalendar.isDate(dataVM.selectedFilterDate, inSameDayAs: newDate) {
+                dataVM.selectedFilterDate = newDate
             }
             hasInitializedScrollPosition = false
             hasSelectedSpecificTime = false
@@ -215,11 +332,14 @@ struct AnalyticsTabView: View {
         }
         .onChange(of: dataVM.rmsTrendHistory.last?.timestamp) { _, _ in
             guard isViewingToday, !hasSelectedSpecificTime else { return }
-            moveToDate(Date(), animated: false)
+            let now = Date()
+            guard now.timeIntervalSince(lastAutoFollowUpdate) >= 2.0 else { return }
+            lastAutoFollowUpdate = now
+            moveToDate(now, animated: false)
         }
     }
 
-    // 圖表頂部操作列
+    /// 圖表上方操作與狀態指示標頭，包含時段標示、選擇時間按鈕與縮放切換
     private var chartControlHeaderView: some View {
         VStack(spacing: 8) {
             HStack {
@@ -262,6 +382,10 @@ struct AnalyticsTabView: View {
         }
     }
 
+    /// 快捷縮放時段按鈕元件
+    /// - Parameters:
+    ///   - title: 按鈕顯示名稱
+    ///   - duration: 目標可視時段秒數
     private func quickZoomButton(title: String, duration: TimeInterval) -> some View {
         Button {
             withAnimation(.easeInOut(duration: 0.25)) {
@@ -284,6 +408,7 @@ struct AnalyticsTabView: View {
         .buttonStyle(.plain)
     }
 
+    /// 彈出式日期與時間滾輪跳轉導覽頁面
     private var timePickerNavigationStack: some View {
         NavigationStack {
             VStack(spacing: 16) {
@@ -371,35 +496,23 @@ struct AnalyticsTabView: View {
         .presentationDetents([.large])
     }
 
-    // 核心手勢圖表本體
+    /// 核心手勢圖表本體，支援滑動檢視、雙指縮放、拖曳平移與單擊選取
     private var interactiveChartView: some View {
-        GeometryReader { geometry in
+        let chartPoints = downsampleTrend(bufferedTremorPoints, maxCount: 900)
+        let currentMaxY = maxY(for: chartPoints)
+
+        return GeometryReader { geometry in
             Chart {
-                // 震動強度折線與漸層面積
-                ForEach(bufferedTremorPoints) { point in
+                ForEach(chartPoints) { point in
                     LineMark(
                         x: .value("時間", point.timestamp),
                         y: .value("強度", max(0, point.rmsValue))
                     )
                     .foregroundStyle(AppTheme.primary(for: colorScheme))
                     .lineStyle(StrokeStyle(lineWidth: 2))
-                    .interpolationMethod(.monotone)
-
-                    AreaMark(
-                        x: .value("時間", point.timestamp),
-                        y: .value("強度", max(0, point.rmsValue))
-                    )
-                    .foregroundStyle(
-                        LinearGradient(
-                            colors: [AppTheme.primary(for: colorScheme).opacity(0.22), .clear],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                    )
-                    .interpolationMethod(.monotone)
+                    .interpolationMethod(.linear)
                 }
 
-                // 服藥標記垂直線與註記
                 ForEach(bufferedMedications) { med in
                     RuleMark(x: .value("服藥時間", med.date))
                         .lineStyle(StrokeStyle(lineWidth: 2, dash: [4, 4]))
@@ -424,7 +537,6 @@ struct AnalyticsTabView: View {
                         }
                 }
 
-                // 原地單擊選取標記線
                 if let selectedDate = selectedPointDate, let selectedRMS = selectedPointRMS {
                     RuleMark(x: .value("選取時間", selectedDate))
                         .foregroundStyle(Color.red.opacity(0.7))
@@ -439,7 +551,7 @@ struct AnalyticsTabView: View {
                 }
             }
             .chartXScale(domain: clampedChartScrollPosition...visibleEndDate)
-            .chartYScale(domain: 0.0...dynamicMaxY)
+            .chartYScale(domain: 0.0...currentMaxY)
             .chartYAxis {
                 AxisMarks(position: .trailing, values: .automatic(desiredCount: 4)) { value in
                     AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5, dash: [4, 4]))
@@ -521,7 +633,7 @@ struct AnalyticsTabView: View {
         .frame(height: chartHeight)
     }
 
-    // 原地選取資訊卡片
+    /// 原地單擊選取後顯示之詳細資訊卡片
     @ViewBuilder
     private var inPlaceSelectionDetailCard: some View {
         if let selectedDate = selectedPointDate, let rms = selectedPointRMS {
@@ -574,6 +686,7 @@ struct AnalyticsTabView: View {
         }
     }
 
+    /// 圖表閱讀指引與臨床觀察摘要卡片
     private var summaryCardView: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("圖表閱讀說明")
@@ -599,6 +712,8 @@ struct AnalyticsTabView: View {
         .background(AppTheme.primary(for: colorScheme).opacity(0.08))
         .cornerRadius(12)
     }
+
+    /// 無震顫與服藥紀錄時顯示之空狀態提示視圖
     private var emptyStateView: some View {
         VStack(spacing: 8) {
             Image(systemName: "waveform.path.ecg")
@@ -613,6 +728,7 @@ struct AnalyticsTabView: View {
         .cornerRadius(12)
     }
 
+    /// 圖表底部操作提示與單位標籤
     private var chartFooterView: some View {
         HStack {
             Text("點擊圖表可標記時間點（紅點與紅虛線）檢視精確數值")
@@ -625,14 +741,12 @@ struct AnalyticsTabView: View {
         }
     }
 
-    // 互動與計算邏輯
+    /// 處理使用者於圖表上的單擊手勢，尋找最接近之有效資料點
+    /// - Parameter tappedDate: 點擊處對應之時間
     private func handleChartTap(at tappedDate: Date) {
         let tolerance = max(clampedVisibleDuration * 0.05, 30)
-        let nearbyHistory = bufferedTremorPoints.filter {
-            abs($0.timestamp.timeIntervalSince(tappedDate)) <= tolerance
-        }
 
-        if let closest = nearbyHistory.min(by: { abs($0.timestamp.timeIntervalSince(tappedDate)) < abs($1.timestamp.timeIntervalSince(tappedDate)) }) {
+        if let closest = dataVM.nearestTrendPoint(to: tappedDate, tolerance: tolerance) {
             withAnimation(.easeOut(duration: 0.2)) {
                 selectedPointDate = closest.timestamp
                 selectedPointRMS = closest.rmsValue
@@ -645,6 +759,9 @@ struct AnalyticsTabView: View {
         }
     }
 
+    /// 計算給定時間距離前一次服藥的時間間隔文字描述
+    /// - Parameter date: 目標比對時間
+    /// - Returns: 格式化後的時間間隔描述字串
     private func relativeMedicationTimeText(for date: Date) -> String {
         let pastMeds = todayMedications.filter { $0.date <= date }.sorted { $0.date > $1.date }
         guard let lastMed = pastMeds.first else { return "服藥前量測" }
@@ -652,11 +769,11 @@ struct AnalyticsTabView: View {
         let diffMinutes = Int(date.timeIntervalSince(lastMed.date) / 60)
         let hours = diffMinutes / 60
         let minutes = diffMinutes % 60
-
         let timeStr = hours > 0 ? "\(hours)小時\(minutes)分" : "\(minutes)分鐘"
         return "服藥（\(lastMed.name)）後 \(timeStr)"
     }
 
+    /// 視圖初次載入時初始化圖表捲動位置
     private func initializeScrollPositionIfNeeded() {
         guard !hasInitializedScrollPosition else { return }
         hasInitializedScrollPosition = true
@@ -672,10 +789,13 @@ struct AnalyticsTabView: View {
         }
     }
 
+    /// 平移圖表視野至指定時間點
+    /// - Parameters:
+    ///   - target: 目標時間點
+    ///   - animated: 是否包含動畫效果
     private func moveToDate(_ target: Date, animated: Bool) {
         let safeTarget = min(max(target, dayStart), dayEnd)
         let maxLeading = max(dayStart, dayEnd.addingTimeInterval(-clampedVisibleDuration))
-
         let leading = safeTarget.addingTimeInterval(-clampedVisibleDuration * 0.5)
         let clampedLeading = min(max(leading, dayStart), maxLeading)
 
@@ -686,11 +806,16 @@ struct AnalyticsTabView: View {
         }
     }
 
+    /// 限制圖表捲動位置不超出當日有效邊界
     private func keepScrollPositionInsideDay() {
         let maxLeading = max(dayStart, dayEnd.addingTimeInterval(-clampedVisibleDuration))
         chartScrollPosition = min(max(chartScrollPosition, dayStart), maxLeading)
     }
 
+    /// 建立圖表圖例標記元件
+    /// - Parameters:
+    ///   - color: 圖例圓點色彩
+    ///   - title: 圖例說明文字
     private func legendBadge(color: Color, title: String) -> some View {
         HStack(spacing: 4) {
             Circle().fill(color).frame(width: 8, height: 8)

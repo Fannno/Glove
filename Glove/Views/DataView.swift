@@ -9,77 +9,72 @@ struct DataView: View {
     @ObservedObject var bleVM: BluetoothViewModel
     @Environment(\.colorScheme) private var colorScheme
 
-    /// 模式切換與介面展示設定
+    /// 介面模式偏好與各類彈窗控制狀態
     @AppStorage("isSimpleModeEnabled") private var isSimpleMode: Bool = false
     @State private var isChartCleared: Bool = false
     @State private var activeInfoSheet: InfoSheetType? = nil
+    @State private var showResearchNoticeSheet: Bool = false
 
-    /// 多媒體選取與預覽狀態
+    /// 多媒體照片選擇器、預覽圖片與分頁狀態
     @State private var selectedMediaItems: [PhotosPickerItem] = []
     @State private var previewImage: UIImage? = nil
     @State private var currentPageIndex: Int = 0
 
-    /// 事件編輯與圖表彈窗控制
+    /// 事件編輯、情境標籤暫存與輸入焦點狀態
     @State private var showPSDForEventID: UUID? = nil
     @State private var editingEventID: UUID? = nil
     @State private var tempUserTag: String = ""
     @State private var tempSelectedImages: [UIImage] = []
     @FocusState private var isFieldFocused: Bool
 
-    /// 事件儲存流程與錯誤提示狀態
+    /// 事件儲存流程狀態與錯誤警訊控制
     @State private var savingEventID: UUID? = nil
     @State private var showSaveErrorAlert: Bool = false
     @State private var saveErrorMessage: String = ""
 
-    /// 歷史補填提醒機制與圖表跳轉控制
+    /// 歷史補填提醒防打擾設定、選單控制與圖表跳轉目標時間
     @AppStorage("tremorReminderSnoozedUntil") private var tremorReminderSnoozedUntil: Double = 0
     @AppStorage("tremorReminderIgnoredBefore") private var tremorReminderIgnoredBefore: Double = 0
     @State private var showReminderOptions: Bool = false
     @State private var chartJumpTargetDate: Date? = nil
 
-    /// 計算屬性：篩選條件與角色狀態判定
+    /// 判斷當前篩選日期是否為今天
     private var isViewingToday: Bool {
         Calendar.current.isDateInToday(dataVM.selectedFilterDate)
     }
 
+    /// 判斷目前使用者是否具備照護者身分
     private var isCaregiver: Bool {
         loginVM.userData?.role == 1 || loginVM.boundPartner != nil
     }
 
+    /// 頂部狀態列當前連線或角色狀態文字
     private var currentStatusText: String {
-        if isCaregiver {
-            return "Steadyer 家屬"
-        }
-
-        if !bleVM.isConnected {
-            return "裝置未連線"
-        }
-
+        if isCaregiver { return "Steadyer 家屬" }
+        if !bleVM.isConnected { return "裝置未連線" }
         return dataVM.statusText
     }
 
-    /// 計算屬性：標準模式儀表板數值格式化文字
+    /// 標準模式儀表板頻率顯示文字
     private var standardFreqDisplayText: String {
         if isChartCleared { return "--" }
-
         if let point = dataVM.selectedPoint {
             if let event = dataVM.filteredEvents.first(where: { abs($0.timestamp.timeIntervalSince(point.timestamp)) <= 5.0 }) {
                 return String(format: "%.1f Hz", event.dominantFrequency)
             }
             return "--"
         }
-
         if !isCaregiver && !bleVM.isConnected { return "--" }
         return dataVM.dominantFrequencyText
     }
 
+    /// 標準模式儀表板強度顯示文字
     private var standardRMSDisplayText: String {
         if let selected = dataVM.selectedPoint {
             return String(format: "%.1f", max(0, selected.rmsValue))
         }
         if isChartCleared { return "0.0" }
         if !isCaregiver && !bleVM.isConnected { return "--" }
-
         let value = dataVM.currentRMS
         guard value.isFinite, !value.isNaN else { return "0.0" }
         return String(format: "%.1f", max(0, value))
@@ -155,9 +150,12 @@ struct DataView: View {
         .fullScreenCover(item: $activeInfoSheet) { sheetType in
             DataInfoOverlayView(type: sheetType, activeInfoSheet: $activeInfoSheet).background(BackgroundClearView())
         }
+        .sheet(isPresented: $showResearchNoticeSheet) {
+            ResearchNoticeView()
+        }
     }
 
-    /// 頂部狀態列視圖
+    /// 頂部標題與連線狀態指示列
     private var headerView: some View {
         HStack {
             VStack(alignment: .leading, spacing: 6) {
@@ -176,17 +174,6 @@ struct DataView: View {
                             .foregroundColor(AppTheme.primary(for: colorScheme))
                     }
                     .buttonStyle(.plain)
-
-                    if isCaregiver {
-                        Text("受照護者")
-                            .font(.caption2)
-                            .fontWeight(.bold)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(AppTheme.primary(for: colorScheme).opacity(0.12))
-                            .foregroundColor(AppTheme.primary(for: colorScheme))
-                            .cornerRadius(4)
-                    }
                 }
                 .padding(.top, 5)
 
@@ -197,18 +184,36 @@ struct DataView: View {
                         .foregroundColor(AppTheme.textSecondary(for: colorScheme))
                 }
             }
+
             Spacer()
+
+            Button {
+                showResearchNoticeSheet = true
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "exclamationmark.shield")
+                    Text("使用須知")
+                }
+                .font(.caption2.weight(.bold))
+                .foregroundColor(AppTheme.primary(for: colorScheme))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+                .background(AppTheme.primary(for: colorScheme).opacity(0.12))
+                .cornerRadius(8)
+            }
+            .buttonStyle(.plain)
         }
         .padding(.horizontal, 20)
         .padding(.top, 12)
     }
 
+    /// 根據使用者身分動態產生畫面主標題
     private var titleText: String {
         if isCaregiver { return "\(loginVM.partnerName) 的動作數據" }
         return "即時動作數據"
     }
 
-    /// 歷史補填提醒橫幅與候選事件統計
+    /// 計算待補填情境標籤的歷史候選事件數量
     private var reminderCandidateCount: Int {
         let ignoredBefore = Date(timeIntervalSince1970: tremorReminderIgnoredBefore)
         let snoozed = Date().timeIntervalSince1970 < tremorReminderSnoozedUntil
@@ -222,6 +227,7 @@ struct DataView: View {
         }.count
     }
 
+    /// 歷史事件未標記提醒橫幅
     private var pastUnlabeledAlertBanner: some View {
         HStack(spacing: 10) {
             Image(systemName: "exclamationmark.triangle.fill")
@@ -286,7 +292,7 @@ struct DataView: View {
         .padding(.horizontal, 20)
     }
 
-    /// 日期選擇器與檢視模式切換控制列
+    /// 日期選擇器與簡易/標準模式切換列
     private var filterAndModeControlBar: some View {
         HStack {
             HStack(spacing: 6) {
@@ -331,7 +337,7 @@ struct DataView: View {
         .padding(.horizontal, 20)
     }
 
-    /// 標準模式數據看板視圖
+    /// 標準模式數據看板卡片（震動頻率與震動強度）
     private var dashboardCardsView: some View {
         HStack(spacing: 15) {
             VStack(alignment: .leading, spacing: 8) {
@@ -382,7 +388,7 @@ struct DataView: View {
         .padding(.horizontal, 20)
     }
 
-    /// 簡易模式數據看板視圖
+    /// 簡易模式數據看板卡片（震顫節奏、抖動幅度與狀態摘要）
     private var simpleDashboardCardsView: some View {
         VStack(spacing: 12) {
             HStack(spacing: 12) {
@@ -451,28 +457,33 @@ struct DataView: View {
         .padding(.horizontal, 20)
     }
 
+    /// 簡易模式狀態摘要標題文字
     private var simpleStatusTitle: String {
         if !isCaregiver && !bleVM.isConnected { return "目前沒有連線" }
         if dataVM.currentRMS >= 0.20 { return "有明顯震顫" }
         return "手部很穩定"
     }
 
+    /// 簡易模式狀態說明文字
     private var simpleStatusDescription: String {
         if !isCaregiver && !bleVM.isConnected { return "連接裝置後，才會繼續顯示即時震動。" }
         if dataVM.currentRMS >= 0.20 { return "系統目前偵測到比較明顯的手部震動。" }
         return "目前沒有偵測到明顯的手部震動。"
     }
 
+    /// 簡易模式狀態指示色彩
     private var simpleStatusColor: Color {
         if !isCaregiver && !bleVM.isConnected { return AppTheme.textSecondary(for: colorScheme) }
         return dataVM.currentRMS >= 0.20 ? .orange : .green
     }
 
     /// 建構 RMS 走勢圖表容器視圖
+    /// - Parameter parentProxy: 外層捲動視圖代理
+    /// - Returns: 圖表容器元件
     private func rmsTrendChartView(parentProxy: ScrollViewProxy) -> some View {
         RMSTrendChartViewContainer(
             history: dataVM.rmsTrendHistory,
-            lineHistory: dataVM.mergedRMSChartHistory(),
+            lineHistory: dataVM.rmsTrendHistory,
             motorIntervals: dataVM.motorActiveIntervals,
             events: dataVM.filteredEvents,
             selectedDate: dataVM.selectedFilterDate,
@@ -482,7 +493,9 @@ struct DataView: View {
             selectedPoint: dataVM.selectedPoint,
             isChartCleared: $isChartCleared,
             jumpTargetDate: $chartJumpTargetDate,
-            onPointSelected: { point in handleChartPointSelection(point, parentProxy: parentProxy) },
+            onEventSelected: { event in
+                handleChartEventSelection(event, parentProxy: parentProxy)
+            },
             onChartSelectionCleared: {
                 dataVM.selectedPoint = nil
                 dataVM.expandedEventID = nil
@@ -500,23 +513,39 @@ struct DataView: View {
         )
     }
 
-    /// 處理圖表點擊選取與事件滾動連動
-    private func handleChartPointSelection(_ point: DataViewModel.RMSTrendPoint, parentProxy: ScrollViewProxy) {
-        dataVM.selectedPoint = point
-        isChartCleared = false
+    /// 處理圖表中點選事件點後的聯動選擇與卡片捲動跳轉
+    /// - Parameters:
+    ///   - event: 選取之震顫事件實體
+    ///   - parentProxy: 外層捲動視圖代理
+    private func handleChartEventSelection(_ event: TremorEvent, parentProxy: ScrollViewProxy) {
+        if let trendPoint = dataVM.nearestTrendPoint(to: event.timestamp, tolerance: 1.0) {
+            dataVM.selectedPoint = trendPoint
+        } else {
+            dataVM.selectedPoint = DataViewModel.RMSTrendPoint(
+                timestamp: event.timestamp,
+                timeLabel: event.timeLabel,
+                rmsValue: event.rmsValue,
+                isMotorActive: event.isMotorActive,
+                rawWindowData: event.rawWindowData
+            )
+        }
 
-        if let event = dataVM.filteredEvents.min(by: { abs($0.timestamp.timeIntervalSince(point.timestamp)) < abs($1.timestamp.timeIntervalSince(point.timestamp)) }),
-           abs(event.timestamp.timeIntervalSince(point.timestamp)) <= 5.0 {
-            dataVM.expandedEventID = event.id
-            DispatchQueue.main.async {
-                withAnimation(.easeOut(duration: 0.25)) {
-                    parentProxy.scrollTo(event.id, anchor: .center)
+        isChartCleared = false
+        dataVM.expandedEventID = event.id
+
+        DispatchQueue.main.async {
+            withAnimation(.easeOut(duration: 0.20)) {
+                parentProxy.scrollTo(event.id, anchor: .center)
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+                withAnimation(.easeOut(duration: 0.20)) {
+                    parentProxy.scrollTo(event.id, anchor: .top)
                 }
             }
         }
     }
 
-    /// 動作分析紀錄分區視圖
+    /// 動作分析紀錄分區清單視圖
     private var tremorEventsSectionView: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
@@ -551,10 +580,12 @@ struct DataView: View {
         }
     }
 
-    /// 依小時分組呈現之事件垂直清單
+    /// 依小時分組之震顫事件卡片清單
     private var eventListView: some View {
-        let groupedEvents = Dictionary(grouping: dataVM.filteredEvents) { $0.timestamp.toString(format: "HH:00") }
+        let filtered = dataVM.filteredEvents
+        let groupedEvents = Dictionary(grouping: filtered) { $0.timestamp.toString(format: "HH:00") }
         let sortedHours = groupedEvents.keys.sorted { $0 > $1 }
+        let indexByID = Dictionary(uniqueKeysWithValues: dataVM.tremorEvents.indices.map { (dataVM.tremorEvents[$0].id, $0) })
 
         return LazyVStack(alignment: .leading, spacing: 16) {
             ForEach(sortedHours, id: \.self) { hourHeader in
@@ -566,7 +597,7 @@ struct DataView: View {
                         .padding(.top, 4)
 
                     ForEach(groupedEvents[hourHeader] ?? []) { event in
-                        if let index = dataVM.tremorEvents.firstIndex(where: { $0.id == event.id }) {
+                        if let index = indexByID[event.id] {
                             TremorEventCardView(
                                 event: $dataVM.tremorEvents[index],
                                 dataVM: dataVM,
@@ -592,10 +623,18 @@ struct DataView: View {
         }
     }
 
+    /// 建立照片全螢幕預覽視圖
+    /// - Parameters:
+    ///   - image: 欲展示之圖片實體
+    ///   - onClose: 關閉預覽回呼閉包
+    /// - Returns: 照片預覽元件
     private func imagePreview(image: UIImage, onClose: @escaping () -> Void) -> some View {
         ImagePreview(image: image, onClose: onClose)
     }
 
+    /// 依據連線狀態文字判斷指示燈之對應色彩
+    /// - Parameter status: 狀態說明文字
+    /// - Returns: 對應的 Color 色彩
     private func statusColor(_ status: String) -> Color {
         switch status {
         case "Steadyer 家屬": return AppTheme.primary(for: colorScheme)
@@ -607,24 +646,28 @@ struct DataView: View {
     }
 }
 
-/// RMS 走勢圖表容器：折線穿過事件波峰，只有事件顯示為橘/紅點
+/// RMS 震動走勢圖表容器元件，負責手勢縮放、水平捲動平移、事件點顯示與馬達作用區間渲染
 private struct RMSTrendChartViewContainer: View {
+    /// 走勢歷史、事件清單、馬達時段與選定日期
     let history: [DataViewModel.RMSTrendPoint]
     let lineHistory: [DataViewModel.RMSTrendPoint]
     let motorIntervals: [DataViewModel.MotorActiveInterval]
     let events: [TremorEvent]
     let selectedDate: Date
+
+    /// 外層視圖代理、狀態綁定與事件回呼閉包
     let parentProxy: ScrollViewProxy
     let isViewingToday: Bool
     let activeInfoSheet: Binding<InfoSheetType?>
     let selectedPoint: DataViewModel.RMSTrendPoint?
     @Binding var isChartCleared: Bool
     let jumpTargetDate: Binding<Date?>
-    let onPointSelected: (DataViewModel.RMSTrendPoint) -> Void
+    let onEventSelected: (TremorEvent) -> Void
     let onChartSelectionCleared: () -> Void
     let onReturnToNow: () -> Void
     @Environment(\.colorScheme) private var colorScheme
 
+    /// 縮放時長、圖表水平捲動位置與手勢拖曳狀態
     @State private var visibleDuration: TimeInterval = 60
     @State private var zoomBaseDuration: TimeInterval = 60
     @State private var chartScrollPosition: Date = Date()
@@ -633,156 +676,172 @@ private struct RMSTrendChartViewContainer: View {
     @State private var isPinching: Bool = false
     @State private var dragStartScrollPosition: Date? = nil
 
+    /// 時間跳轉滾輪彈窗狀態與選中時間
     @State private var showTimePicker: Bool = false
     @State private var selectedChartTime: Date = Date()
     @State private var hasSelectedSpecificTime: Bool = false
 
+    /// 圖表中當前選取之事件識別碼與時間戳記
     @State private var chartSelectedEventID: UUID? = nil
     @State private var chartSelectedDate: Date? = nil
 
+    /// 圖表可視時長極限與高度常數
     private let minimumVisibleDuration: TimeInterval = 3
     private let maximumVisibleDuration: TimeInterval = 24 * 60 * 60
     private let chartHeight: CGFloat = 285
 
+    /// 台北時區日曆實體
     private var taipeiCalendar: Calendar {
         var calendar = Calendar.current
         calendar.timeZone = TimeZone(identifier: "Asia/Taipei") ?? .current
         return calendar
     }
 
+    /// 當日零時起始時間
     private var dayStart: Date {
         taipeiCalendar.startOfDay(for: selectedDate)
     }
 
+    /// 當日結束時間點（今日為當前時間，非今日為隔日零時）
     private var dayEnd: Date {
-        let tomorrow = taipeiCalendar.date(byAdding: .day, value: 1, to: dayStart)
-            ?? dayStart.addingTimeInterval(24 * 60 * 60)
-
-        if isViewingToday {
-            return min(tomorrow, Date())
-        }
-        return tomorrow
+        let tomorrow = taipeiCalendar.date(byAdding: .day, value: 1, to: dayStart) ?? dayStart.addingTimeInterval(24 * 60 * 60)
+        return isViewingToday ? min(tomorrow, Date()) : tomorrow
     }
 
+    /// 當日最後一個有效秒數時間點
     private var dayLastSecond: Date {
-        if isViewingToday {
-            return Date()
-        }
-        return dayEnd.addingTimeInterval(-1)
+        isViewingToday ? Date() : dayEnd.addingTimeInterval(-1)
     }
 
+    /// 夾擠限制後之可視時長
     private var clampedVisibleDuration: TimeInterval {
         min(max(visibleDuration, minimumVisibleDuration), maximumVisibleDuration)
     }
 
+    /// 圖表左側起點允許之最大時間
     private var maxLeadingDate: Date {
         max(dayStart, dayEnd.addingTimeInterval(-clampedVisibleDuration))
     }
 
+    /// 限制在邊界內的圖表水平捲動起始位置
     private var clampedChartScrollPosition: Date {
         min(max(chartScrollPosition, dayStart), maxLeadingDate)
     }
 
+    /// 圖表可視範圍的結束時間
     private var visibleEndDate: Date {
         let calculatedEnd = clampedChartScrollPosition.addingTimeInterval(clampedVisibleDuration)
         return min(calculatedEnd, dayEnd)
     }
 
-    private var bufferedHistory: [DataViewModel.RMSTrendPoint] {
+    /// 涵蓋前後緩衝區之資料擷取時段區間
+    private var bufferedRange: (start: Date, end: Date) {
         let buffer = max(clampedVisibleDuration * 1.5, 5)
-        let start = clampedChartScrollPosition.addingTimeInterval(-buffer)
-        let end = visibleEndDate.addingTimeInterval(buffer)
-
-        return history.filter {
-            $0.timestamp >= start && $0.timestamp <= end
-        }
+        return (clampedChartScrollPosition.addingTimeInterval(-buffer), visibleEndDate.addingTimeInterval(buffer))
     }
 
-    private var bufferedEvents: [TremorEvent] {
-        let buffer = max(clampedVisibleDuration * 1.5, 5)
-        let start = clampedChartScrollPosition.addingTimeInterval(-buffer)
-        let end = visibleEndDate.addingTimeInterval(buffer)
-
-        return events.filter {
-            $0.timestamp >= start && $0.timestamp <= end
+    /// 依時間區間利用二分搜尋擷取走勢資料切片
+    /// - Parameters:
+    ///   - points: 原始資料點陣列
+    ///   - start: 區間起始時間
+    ///   - end: 區間結束時間
+    /// - Returns: 切片後之資料點陣列
+    private func trendSlice(_ points: [DataViewModel.RMSTrendPoint], start: Date, end: Date) -> [DataViewModel.RMSTrendPoint] {
+        guard !points.isEmpty else { return [] }
+        var low = 0, high = points.count
+        while low < high {
+            let mid = (low + high) / 2
+            if points[mid].timestamp < start { low = mid + 1 } else { high = mid }
         }
+        let lower = low
+
+        low = lower
+        high = points.count
+        while low < high {
+            let mid = (low + high) / 2
+            if points[mid].timestamp <= end { low = mid + 1 } else { high = mid }
+        }
+        let upper = low
+
+        guard lower < upper else { return [] }
+        return Array(points[lower..<upper])
     }
 
-    /// 主圖實際使用的馬達區間。
-    private var effectiveMotorIntervals: [DataViewModel.MotorActiveInterval] {
-        var intervals = motorIntervals
+    /// 針對資料量過大的走勢資料進行極值降採樣
+    /// - Parameters:
+    ///   - points: 原始資料點陣列
+    ///   - maxCount: 允許之最大取樣點數
+    /// - Returns: 降採樣後之資料點陣列
+    private func downsampleTrend(_ points: [DataViewModel.RMSTrendPoint], maxCount: Int = 1200) -> [DataViewModel.RMSTrendPoint] {
+        guard points.count > maxCount, maxCount >= 4 else { return points }
+        let bucketCount = max(1, maxCount / 2)
+        let bucketSize = Int(ceil(Double(points.count) / Double(bucketCount)))
+        var result: [DataViewModel.RMSTrendPoint] = []
+        result.reserveCapacity(maxCount)
 
-        for event in events where event.isMotorActive {
-            intervals.append(
-                DataViewModel.MotorActiveInterval(
-                    start: event.timestamp.addingTimeInterval(-0.5),
-                    end: event.timestamp
-                )
-            )
-        }
-
-        let sorted = intervals.sorted { $0.start < $1.start }
-        var merged: [DataViewModel.MotorActiveInterval] = []
-
-        for interval in sorted {
-            guard interval.end > interval.start else { continue }
-
-            if let last = merged.last,
-               interval.start.timeIntervalSince(last.end) <= 0.05 {
-                merged.removeLast()
-                merged.append(
-                    DataViewModel.MotorActiveInterval(
-                        id: last.id,
-                        start: last.start,
-                        end: max(last.end, interval.end)
-                    )
-                )
-            } else {
-                merged.append(interval)
+        var startIndex = 0
+        while startIndex < points.count {
+            let endIndex = min(startIndex + bucketSize, points.count)
+            let bucket = points[startIndex..<endIndex]
+            guard let minPoint = bucket.min(by: { $0.rmsValue < $1.rmsValue }),
+                  let maxPoint = bucket.max(by: { $0.rmsValue < $1.rmsValue }) else {
+                startIndex = endIndex
+                continue
             }
+            if minPoint.timestamp <= maxPoint.timestamp {
+                result.append(minPoint)
+                if minPoint.id != maxPoint.id { result.append(maxPoint) }
+            } else {
+                result.append(maxPoint)
+                if minPoint.id != maxPoint.id { result.append(minPoint) }
+            }
+            startIndex = endIndex
         }
-
-        return merged
+        return result
     }
 
-    /// 顯示範圍附近的馬達啟動區間。
+    /// 經緩衝時段過濾之事件清單
+    private var bufferedEvents: [TremorEvent] {
+        let range = bufferedRange
+        return events.filter { $0.timestamp >= range.start && $0.timestamp <= range.end }
+    }
+
+    /// 依數量上限過濾之代表性事件點陣列
+    private var chartEvents: [TremorEvent] {
+        let source = bufferedEvents
+        let maxCount = 800
+        guard source.count > maxCount else { return source }
+
+        let bucketSize = Int(ceil(Double(source.count) / Double(maxCount)))
+        var result: [TremorEvent] = []
+        result.reserveCapacity(maxCount)
+
+        var index = 0
+        while index < source.count {
+            let end = min(index + bucketSize, source.count)
+            if let strongest = source[index..<end].max(by: { $0.rmsValue < $1.rmsValue }) {
+                result.append(strongest)
+            }
+            index = end
+        }
+        return result
+    }
+
+    /// 經緩衝時段過濾之馬達啟動區間陣列
     private var bufferedMotorIntervals: [DataViewModel.MotorActiveInterval] {
-        let buffer = max(clampedVisibleDuration * 1.5, 5)
-        let start = clampedChartScrollPosition.addingTimeInterval(-buffer)
-        let end = visibleEndDate.addingTimeInterval(buffer)
-
-        return effectiveMotorIntervals.filter {
-            $0.end >= start && $0.start <= end
-        }
+        let range = bufferedRange
+        return motorIntervals.filter { $0.end >= range.start && $0.start <= range.end }
     }
 
-    /// 顯示範圍附近的共用折線資料
+    /// 圖表折線繪製使用之降採樣資料點陣列
     private var chartLineHistory: [DataViewModel.RMSTrendPoint] {
-        let buffer = max(clampedVisibleDuration * 1.5, 5)
-        let startDate = clampedChartScrollPosition
-            .addingTimeInterval(-buffer)
-        let endDate = visibleEndDate
-            .addingTimeInterval(buffer)
-
-        return lineHistory.filter {
-            $0.timestamp >= startDate &&
-            $0.timestamp <= endDate &&
-            $0.rmsValue.isFinite &&
-            !$0.rmsValue.isNaN
-        }
-    }
-    /// 同時考量走勢背景與事件波峰之高度，避免被壓在 0.5 底部
-    private var dynamicMaxY: Double {
-        let hValues = bufferedHistory.map(\.rmsValue).filter { $0.isFinite && !$0.isNaN }
-        let eValues = bufferedEvents.map(\.rmsValue).filter { $0.isFinite && !$0.isNaN }
-        let allValues = hValues + eValues
-
-        guard let maximum = allValues.max(), maximum > 0 else {
-            return 0.5
-        }
-        return max(0.5, maximum * 1.15)
+        let range = bufferedRange
+        let sliced = trendSlice(lineHistory, start: range.start, end: range.end)
+        let valid = sliced.filter { $0.rmsValue.isFinite && !$0.rmsValue.isNaN }
+        return downsampleTrend(valid)
     }
 
+    /// 依據可視時長動態計算 X 軸刻度步進間隔秒數
     private var xAxisStride: TimeInterval {
         switch clampedVisibleDuration {
         case ...6: return 1
@@ -801,39 +860,37 @@ private struct RMSTrendChartViewContainer: View {
         }
     }
 
+    /// 計算目前可視範圍內所有 X 軸時間刻度
     private var visibleXAxisTicks: [Date] {
         let step = xAxisStride
         let startInterval = clampedChartScrollPosition.timeIntervalSince1970
         let endInterval = visibleEndDate.timeIntervalSince1970
-
         let bufferedStart = max(dayStart.timeIntervalSince1970, startInterval - step)
         let bufferedEnd = min(dayEnd.timeIntervalSince1970, endInterval + step)
         let alignedStart = floor(bufferedStart / step) * step
 
         var current = alignedStart
         var ticks: [Date] = []
-
         while current <= bufferedEnd {
             let date = Date(timeIntervalSince1970: current)
-            if date >= dayStart && date <= dayEnd {
-                ticks.append(date)
-            }
+            if date >= dayStart && date <= dayEnd { ticks.append(date) }
             current += step
         }
         return ticks
     }
 
+    /// 格式化指定時間在 X 軸上之文字呈現
+    /// - Parameter date: 刻度日期時間
+    /// - Returns: 時間字串
     private func xAxisLabel(for date: Date) -> String {
         switch clampedVisibleDuration {
-        case ...120:
-            return "\(taipeiCalendar.component(.second, from: date))s"
-        case ...3600:
-            return "\(taipeiCalendar.component(.minute, from: date))m"
-        default:
-            return "\(taipeiCalendar.component(.hour, from: date))h"
+        case ...120: return "\(taipeiCalendar.component(.second, from: date))s"
+        case ...3600: return "\(taipeiCalendar.component(.minute, from: date))m"
+        default: return "\(taipeiCalendar.component(.hour, from: date))h"
         }
     }
 
+    /// 圖表可視範圍中央對應的時間戳記
     private var visibleHeaderTime: Date {
         let center = clampedChartScrollPosition.addingTimeInterval(clampedVisibleDuration * 0.5)
         return min(max(center, dayStart), dayLastSecond)
@@ -878,20 +935,18 @@ private struct RMSTrendChartViewContainer: View {
             initializeScrollPositionIfNeeded()
         }
         .onChange(of: history.last?.timestamp) { _, _ in
-            guard isViewingToday else { return }
-            guard !hasSelectedSpecificTime else { return }
+            guard isViewingToday, !hasSelectedSpecificTime else { return }
             moveToDate(Date(), animated: false)
         }
         .onChange(of: jumpTargetDate.wrappedValue) { _, newDate in
             guard let newDate else { return }
             clearChartSelection()
             moveToDate(newDate, animated: true)
-            DispatchQueue.main.async {
-                jumpTargetDate.wrappedValue = nil
-            }
+            DispatchQueue.main.async { jumpTargetDate.wrappedValue = nil }
         }
     }
 
+    /// 圖表時間選擇彈窗導覽頁面
     private var timePickerNavigationStack: some View {
         NavigationStack {
             VStack(spacing: 20) {
@@ -920,9 +975,7 @@ private struct RMSTrendChartViewContainer: View {
                         isChartCleared = false
                         onReturnToNow()
                         showTimePicker = false
-                        DispatchQueue.main.async {
-                            moveToDate(Date(), animated: false)
-                        }
+                        DispatchQueue.main.async { moveToDate(Date(), animated: false) }
                     } label: {
                         HStack(spacing: 6) {
                             Image(systemName: "arrow.clockwise.circle.fill")
@@ -966,10 +1019,14 @@ private struct RMSTrendChartViewContainer: View {
         .presentationDetents([.medium])
     }
 
-    /// 圖表本體繪圖區塊
+    /// 圖表核心繪圖畫布，繪製馬達區間、RMS 折線與事件點
     @ViewBuilder
     private var mainChartArea: some View {
-        let currentMaxY = self.dynamicMaxY
+        let linePoints = chartLineHistory
+        let visibleEvents = chartEvents
+        let hMaximum = linePoints.map(\.rmsValue).filter { $0.isFinite && !$0.isNaN }.max() ?? 0
+        let eMaximum = visibleEvents.map(\.rmsValue).filter { $0.isFinite && !$0.isNaN }.max() ?? 0
+        let currentMaxY = max(0.5, max(hMaximum, eMaximum) * 1.15)
         let safeXAxisTicks = self.visibleXAxisTicks
 
         GeometryReader { geometry in
@@ -989,8 +1046,7 @@ private struct RMSTrendChartViewContainer: View {
                     }
                 }
 
-                // 折線連貫波峰
-                ForEach(chartLineHistory) { point in
+                ForEach(linePoints) { point in
                     if point.rmsValue.isFinite && !point.rmsValue.isNaN {
                         LineMark(
                             x: .value("時間", point.timestamp),
@@ -1002,8 +1058,7 @@ private struct RMSTrendChartViewContainer: View {
                     }
                 }
 
-                // 只有分析紀錄繪製橘點/紅點
-                ForEach(bufferedEvents) { event in
+                ForEach(visibleEvents) { event in
                     let isSelected = (event.id == chartSelectedEventID)
                     PointMark(
                         x: .value("事件時間", event.timestamp),
@@ -1051,8 +1106,7 @@ private struct RMSTrendChartViewContainer: View {
                     .onEnded { tapValue in
                         let location = tapValue.location
                         guard let date = proxy.value(atX: location.x, as: Date.self),
-                              let value = proxy.value(atY: location.y, as: Double.self)
-                        else { return }
+                              let value = proxy.value(atY: location.y, as: Double.self) else { return }
                         handleChartTap(at: date, yValue: value)
                     }
             }
@@ -1099,6 +1153,7 @@ private struct RMSTrendChartViewContainer: View {
         .frame(height: chartHeight)
     }
 
+    /// 圖表上方標題與時間選擇按鈕列
     private var chartHeaderView: some View {
         HStack {
             HStack(spacing: 6) {
@@ -1142,6 +1197,7 @@ private struct RMSTrendChartViewContainer: View {
         }
     }
 
+    /// 無走勢資料時的空白佔位視圖
     private var emptyChartView: some View {
         VStack(spacing: 8) {
             Image(systemName: "chart.line.uptrend.xyaxis")
@@ -1161,6 +1217,7 @@ private struct RMSTrendChartViewContainer: View {
         .cornerRadius(15)
     }
 
+    /// 初次載入時初始化圖表捲動位置至適當時點
     private func initializeScrollPositionIfNeeded() {
         guard !hasInitializedScrollPosition else { return }
         hasInitializedScrollPosition = true
@@ -1177,10 +1234,13 @@ private struct RMSTrendChartViewContainer: View {
         }
     }
 
+    /// 平移圖表視野至指定目標時間點
+    /// - Parameters:
+    ///   - target: 目標時間
+    ///   - animated: 是否包含平活動畫
     private func moveToDate(_ target: Date, animated: Bool) {
         let safeTarget = min(max(target, dayStart), dayEnd)
         let maxLeading = max(dayStart, dayEnd.addingTimeInterval(-clampedVisibleDuration))
-
         let isTargetNow = isViewingToday && safeTarget >= Date().addingTimeInterval(-10)
         let multiplier: TimeInterval = isTargetNow ? 1.0 : 0.5
         let leading = safeTarget.addingTimeInterval(-clampedVisibleDuration * multiplier)
@@ -1193,53 +1253,40 @@ private struct RMSTrendChartViewContainer: View {
         }
     }
 
+    /// 限制圖表水平捲動位置保持在當日合法時段之內
     private func keepScrollPositionInsideDay() {
         let maxLeading = max(dayStart, dayEnd.addingTimeInterval(-clampedVisibleDuration))
         chartScrollPosition = min(max(chartScrollPosition, dayStart), maxLeading)
     }
 
+    /// 清除圖表中當前選取之事件點狀態
     private func clearChartSelection() {
         chartSelectedEventID = nil
         chartSelectedDate = nil
     }
 
-    /// 點選僅鎖定分析紀錄點
-    private func handleChartTap(at tappedDate: Date, yValue: Double) {
-        let maxY = dynamicMaxY
+    /// 處理使用者於圖表上的單擊點擊，判定是否選中鄰近事件點
+    /// - Parameters:
+    ///   - tappedDate: 點擊處 X 軸對應之時間
+    ///   - yValue: 點擊處 Y 軸數值
+    private func handleChartTap(at tappedDate: Date, yValue _: Double) {
         let xTolerance = dynamicHitTolerance
-        let yTolerance = max(maxY * 0.35, 25.0)
 
-        let validEvents = bufferedEvents
-            .filter { event in
-                let clampedRMS = max(0, min(event.rmsValue, maxY))
-                let yDiff = abs(clampedRMS - yValue)
-                let xDiff = abs(event.timestamp.timeIntervalSince(tappedDate))
-                return xDiff <= xTolerance && yDiff <= yTolerance
-            }
-            .sorted {
-                abs($0.timestamp.timeIntervalSince(tappedDate)) < abs($1.timestamp.timeIntervalSince(tappedDate))
-            }
-
-        if let nearestEvent = validEvents.first {
-            chartSelectedEventID = nearestEvent.id
-            chartSelectedDate = nearestEvent.timestamp
-
-            let point = DataViewModel.RMSTrendPoint(
-                timestamp: nearestEvent.timestamp,
-                timeLabel: nearestEvent.timeLabel,
-                rmsValue: nearestEvent.rmsValue,
-                isMotorActive: nearestEvent.isMotorActive,
-                rawWindowData: nearestEvent.rawWindowData
-            )
-
-            onPointSelected(point)
+        guard let nearestEvent = chartEvents.min(by: {
+            abs($0.timestamp.timeIntervalSince(tappedDate)) < abs($1.timestamp.timeIntervalSince(tappedDate))
+        }),
+        abs(nearestEvent.timestamp.timeIntervalSince(tappedDate)) <= xTolerance else {
+            clearChartSelection()
+            onChartSelectionCleared()
             return
         }
 
-        clearChartSelection()
-        onChartSelectionCleared()
+        chartSelectedEventID = nearestEvent.id
+        chartSelectedDate = nearestEvent.timestamp
+        onEventSelected(nearestEvent)
     }
 
+    /// 依據當前縮放等級動態計算點擊容許的時間誤差範圍秒數
     private var dynamicHitTolerance: TimeInterval {
         switch clampedVisibleDuration {
         case ...10: return 1.5
@@ -1254,13 +1301,12 @@ private struct RMSTrendChartViewContainer: View {
         }
     }
 
+    /// 圖表底部圖例說明列
     private var chartFooterLegendView: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 16) {
                 HStack(spacing: 4) {
-                    Circle()
-                        .fill(Color.orange)
-                        .frame(width: 7, height: 7)
+                    Circle().fill(Color.orange).frame(width: 7, height: 7)
                     Text("動作分析紀錄(點擊跳轉)")
                         .font(.caption2)
                         .fontWeight(.medium)
@@ -1268,18 +1314,14 @@ private struct RMSTrendChartViewContainer: View {
                 }
 
                 HStack(spacing: 4) {
-                    RoundedRectangle(cornerRadius: 2)
-                        .fill(Color.orange.opacity(0.3))
-                        .frame(width: 9, height: 9)
+                    RoundedRectangle(cornerRadius: 2).fill(Color.orange.opacity(0.3)).frame(width: 9, height: 9)
                     Text("馬達命令作用區間")
                         .font(.caption2)
                         .foregroundColor(AppTheme.textSecondary(for: colorScheme))
                 }
 
                 HStack(spacing: 4) {
-                    Circle()
-                        .fill(Color.red)
-                        .frame(width: 7, height: 7)
+                    Circle().fill(Color.red).frame(width: 7, height: 7)
                     Text("目前選取")
                         .font(.caption2)
                         .foregroundColor(AppTheme.textSecondary(for: colorScheme))

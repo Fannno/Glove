@@ -47,3 +47,41 @@ struct TremorAnalysisUpdateDTO: Codable {
     /// 分析紀錄備註
     let note: String?
 }
+
+/// 震顫即時走勢點資料傳輸物件（DTO），用於直接記錄畫面當下使用的 RMS 與主頻率數據以供歷史圖表呈現
+public struct TremorTrendPointDTO: Codable, Identifiable, Sendable {
+    public let id: UUID
+    public let sessionId: String
+    public let recordedAt: Date
+    public let rmsValue: Double
+    public let dominantFrequencyHz: Double?
+    public let motorOnFraction: Double
+    public let dataValid: Bool
+    public let frequencyReliable: Bool
+
+    public init(
+        id: UUID = UUID(),
+        sessionId: String,
+        recordedAt: Date,
+        rmsValue: Double,
+        dominantFrequencyHz: Double?,
+        motorOnFraction: Double,
+        dataValid: Bool,
+        frequencyReliable: Bool
+    ) {
+        self.id = id
+        self.sessionId = sessionId
+        self.recordedAt = recordedAt
+        self.rmsValue = rmsValue
+        self.dominantFrequencyHz = dominantFrequencyHz
+        self.motorOnFraction = motorOnFraction
+        self.dataValid = dataValid
+        self.frequencyReliable = frequencyReliable
+    }
+}
+
+/// 震顫走勢點批次上傳請求資料傳輸物件（DTO），用於打包多筆連續走勢點以降低網路傳輸負擔
+struct TremorTrendBatchUploadRequestDTO: Codable, Sendable {
+    let points: [TremorTrendPointDTO]
+}
+

@@ -167,7 +167,7 @@ final class MedicationViewModel: ObservableObject {
     /// 新增單次用藥紀錄並同步至遠端伺服器
     /// - Parameters:
     ///   - currentUserID: 使用者 ID
-    ///   - token: 授權憑證字串
+    ///   - token: 使用者驗證 Token
     func addRecord(currentUserID: Int, token: String) {
         guard isAddRecordValid else { return }
 

@@ -3,29 +3,33 @@ import PhotosUI
 import SwiftUI
 import UIKit
 
+/// 震顫事件卡片視圖，支援展開檢視時序 RMS 走勢、PSD 頻譜圖、補充情境標籤與照片管理
 struct TremorEventCardView: View {
     @Binding var event: TremorEvent
     @ObservedObject var dataVM: DataViewModel
     @ObservedObject var loginVM: LoginViewModel
     @Environment(\.colorScheme) private var colorScheme
-
     let isSimpleMode: Bool
+
+    /// 編輯情境標籤與照片選擇暫存綁定狀態
     @Binding var editingEventID: UUID?
     @Binding var tempUserTag: String
     @Binding var tempSelectedImages: [UIImage]
     @Binding var selectedMediaItems: [PhotosPickerItem]
     @Binding var currentPageIndex: Int
     @Binding var previewImage: UIImage?
+
+    /// 儲存進度、提示警告與彈窗工作表綁定狀態
     @Binding var savingEventID: UUID?
     @Binding var activeInfoSheet: InfoSheetType?
     @Binding var showSaveErrorAlert: Bool
     @Binding var saveErrorMessage: String
 
+    /// 文字輸入框焦點狀態與圖表切換分頁索引
     @FocusState.Binding var isFieldFocused: Bool
-
     @State private var selectedChartTab: Int = 0
 
-    /// 嚴格判定是否為照護者（role == 1）
+    /// 身分與卡片展示狀態判斷計算屬性
     private var isCaregiver: Bool {
         if let role = loginVM.userData?.role {
             return role == 1
@@ -44,7 +48,6 @@ struct TremorEventCardView: View {
         !event.userTag.isEmpty && event.userTag != "未標記"
     }
 
-    /// 只有在「非照護者」且當前事件處於編輯狀態時，才開啟編輯面板
     private var isEditing: Bool {
         !isCaregiver && editingEventID == event.id
     }
@@ -77,6 +80,7 @@ struct TremorEventCardView: View {
         .shadow(color: Color.black.opacity(0.05), radius: 5, y: 2)
     }
 
+    /// 卡片頂部摘要列按鈕，點擊可展開或收合卡片細節
     private var headerButton: some View {
         Button(action: {
             UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
@@ -151,6 +155,7 @@ struct TremorEventCardView: View {
         .buttonStyle(.plain)
     }
 
+    /// 唯讀檢視面板，展示已記錄之情境標籤與照片預覽
     private var readOnlyPanelView: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
@@ -214,6 +219,7 @@ struct TremorEventCardView: View {
         }
     }
 
+    /// 編輯面板，提供標籤文字輸入、快捷活動選項與照片上傳功能
     private var editablePanelView: some View {
         let isCurrentlySaving = savingEventID == event.id
 
@@ -319,6 +325,7 @@ struct TremorEventCardView: View {
         }
     }
 
+    /// 事件細節圖表容器，支援強度走勢與頻率分佈切換
     private var eventDetailChartsView: some View {
         VStack(alignment: .leading, spacing: 10) {
             Picker("圖表類型", selection: $selectedChartTab) {
@@ -335,17 +342,17 @@ struct TremorEventCardView: View {
         }
     }
 
-    /// 產生等距且不越界的 X 軸刻度時間陣列
+    /// 產生圖表時間軸安全刻度陣列
     /// - Parameters:
-    ///   - start: 刻度起始時間
-    ///   - end: 刻度結束時間
+    ///   - start: 區間起始時間
+    ///   - end: 區間結束時間
     ///   - strideSeconds: 刻度步進間隔秒數
-    /// - Returns: 經過間隔計算之 Date 陣列
+    /// - Returns: 計算後之日期刻度陣列
     private func generateSafeXAxisTicks(start: Date, end: Date, strideSeconds: TimeInterval) -> [Date] {
         var ticks: [Date] = []
         var current = start.timeIntervalSince1970
         let endInterval = end.timeIntervalSince1970
-        
+
         while current <= endInterval {
             ticks.append(Date(timeIntervalSince1970: current))
             current += strideSeconds
@@ -385,7 +392,6 @@ struct TremorEventCardView: View {
             HStack(spacing: 6) {
                 Image(systemName: "chart.line.uptrend.xyaxis")
                     .foregroundColor(AppTheme.primary(for: colorScheme))
-
                 Text("\(event.timestamp.toString(format: "HH:mm:ss")) 前後 3 秒震動強度走勢")
                     .font(.system(size: 14, weight: .bold))
                     .foregroundColor(AppTheme.textPrimary(for: colorScheme))
@@ -555,7 +561,6 @@ struct TremorEventCardView: View {
                 Image(systemName: "chart.bar.fill")
                     .font(.system(size: 18))
                     .foregroundColor(.purple)
-
                 Text("震動頻率分佈")
                     .font(.system(size: 16, weight: .bold))
                     .foregroundColor(AppTheme.textPrimary(for: colorScheme))
@@ -597,11 +602,9 @@ struct TremorEventCardView: View {
                     Image(systemName: "waveform.slash")
                         .font(.system(size: 28))
                         .foregroundColor(AppTheme.textSecondary(for: colorScheme).opacity(0.6))
-
                     Text("此事件沒有完整的頻率分析資料")
                         .font(.subheadline.weight(.semibold))
                         .foregroundColor(AppTheme.textSecondary(for: colorScheme))
-
                     Text("需取得事件附近完整的 400 筆感測資料，才能繪製 PSD 柱狀圖。")
                         .font(.caption)
                         .multilineTextAlignment(.center)
@@ -714,8 +717,8 @@ struct TremorEventCardView: View {
         .shadow(color: Color.black.opacity(0.05), radius: 5, y: 2)
     }
 
-    /// 格式化 PSD 能量數值顯示，依據數值區間自動切換科學記號或小數點格式
-    /// - Parameter value: 待格式化之 PSD 數值
+    /// 格式化 PSD 能量數值字串
+    /// - Parameter value: 能量強度數值
     /// - Returns: 格式化後之字串
     private func formattedPSDPower(_ value: Double) -> String {
         if value == 0 {

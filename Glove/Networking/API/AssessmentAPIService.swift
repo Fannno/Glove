@@ -11,7 +11,7 @@ class AssessmentAPIService {
     /// 提交每日健康評估問卷至伺服器
     /// - Parameters:
     ///   - payload: 包含評估總分、各面向分數與細項作答之請求資料傳輸物件
-    ///   - token: 身分驗證 Bearer 權杖字串
+    ///   - token: 使用者驗證 Token
     /// - Returns: 伺服器端保存完成後回傳之評估紀錄回應 DTO
     func submitDailyAssessment(
         payload: CreateDailyAssessmentRequestDTO,
@@ -40,7 +40,7 @@ class AssessmentAPIService {
     /// 查詢使用者之每日評估歷史紀錄（若帶入日期則查詢指定單日，若未帶入則查詢全部）
     /// - Parameters:
     ///   - dateString: 查詢日期字串（格式為 yyyy-MM-dd），可選
-    ///   - token: 身分驗證 Bearer 權杖字串
+    ///   - token: 使用者驗證 Token
     /// - Returns: 符合條件之每日評估紀錄回應 DTO 陣列
     func fetchDailyAssessment(
         dateString: String?,
@@ -67,7 +67,7 @@ class AssessmentAPIService {
     /// 刪除指定評估紀錄
     /// - Parameters:
     ///   - recordID: 欲刪除之評估紀錄唯一識別碼
-    ///   - token: 身分驗證 Bearer 權杖字串
+    ///   - token: 使用者驗證 Token
     func deleteDailyAssessment(
         recordID: Int,
         token: String

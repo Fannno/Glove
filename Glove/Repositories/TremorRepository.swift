@@ -30,17 +30,19 @@ protocol TremorRepositoryProtocol {
 
     /// 自伺服器取得歷史震顫分析紀錄清單
     func fetchAnalysisHistory() async throws -> [TremorAnalysisRecordDTO]
+
+    /// 批次同步即時 RMS 趨勢點
+    func syncTrendPoints(_ points: [TremorTrendPointDTO]) async throws
+
+    /// 依日期區間取得 RMS 趨勢歷史
+    func fetchTrendHistory(from: Date, to: Date) async throws -> [TremorTrendPointDTO]
 }
 
 /// 震顫資料儲存庫實作類別，負責協調 API 服務與身分驗證憑證完成資料同步與讀取
 final class TremorRepository: TremorRepositoryProtocol {
-    /// 遠端 API 服務實體
+    /// 遠端 API 服務實體、身分驗證 Token 提供者閉包與 JSON 編碼器
     private let apiService: TremorAPIServiceProtocol
-
-    /// 身分驗證 Token 提供者閉包
     private let tokenProvider: () -> String?
-
-    /// 統一重複使用的 JSONEncoder
     private let encoder: JSONEncoder = {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
@@ -71,20 +73,20 @@ final class TremorRepository: TremorRepositoryProtocol {
 
     /// 批次壓縮並上傳原始感測數據點
     func syncRawData(sessionId: String, rawPoints: [TremorDataPoint], baseDate: Date) async throws {
-        guard !rawPoints.isEmpty else {
-            return
-        }
+        guard !rawPoints.isEmpty else { return }
 
         let token = try getValidToken()
         let firstTick = rawPoints.first?.sampleTickMs ?? 0
 
-        let dtos = rawPoints.map { point -> TremorRawDataPointDTO in
+        let dtos = rawPoints.enumerated().map { index, point -> TremorRawDataPointDTO in
             let pointDate: Date
             if let recordedAt = point.recordedAt {
                 pointDate = recordedAt
-            } else {
-                let deltaTick = point.sampleTickMs &- firstTick
+            } else if point.sampleTickMs >= firstTick {
+                let deltaTick = point.sampleTickMs - firstTick
                 pointDate = baseDate.addingTimeInterval(Double(deltaTick) / 1000.0)
+            } else {
+                pointDate = baseDate.addingTimeInterval(Double(index) * 0.01)
             }
 
             return TremorRawDataPointDTO(
@@ -105,14 +107,8 @@ final class TremorRepository: TremorRepositoryProtocol {
         } catch {
             throw NetworkError.encodingFailed
         }
-        
-        let compressedData: Data
-        do {
-            compressedData = try (jsonData as NSData).compressed(using: .zlib) as Data
-        } catch {
-            throw error
-        }
-        
+
+        let compressedData = try (jsonData as NSData).compressed(using: .zlib) as Data
         let payload = TremorRawUploadRequestDTO(
             sessionId: sessionId,
             sampleCount: rawPoints.count,
@@ -131,19 +127,12 @@ final class TremorRepository: TremorRepositoryProtocol {
     /// 更新既有震顫分析紀錄的情境標籤與備註
     func updateAnalysisRecord(id: UUID, activityTag: String, note: String?) async throws {
         let token = try getValidToken()
-        
         let trimmedTag = activityTag.trimmingCharacters(in: .whitespacesAndNewlines)
-        
         let payload = TremorAnalysisUpdateDTO(
             activityTag: trimmedTag.isEmpty ? "未標記" : trimmedTag,
             note: note
         )
-        
-        try await apiService.updateAnalysisRecord(
-            id: id,
-            payload: payload,
-            token: token
-        )
+        try await apiService.updateAnalysisRecord(id: id, payload: payload, token: token)
     }
     
     /// 上傳分析紀錄的別名方法
@@ -185,7 +174,6 @@ final class TremorRepository: TremorRepositoryProtocol {
     }
 
     /// 取得歷史原始取樣點清單（相容舊介面，剝除時間資訊僅回傳 TremorDataPoint）
-    /// - Returns: 歷史震顫取樣點陣列
     func fetchRawDataHistory() async throws -> [TremorDataPoint] {
         try await fetchTimedRawDataHistory().map(\.point)
     }
@@ -198,38 +186,83 @@ final class TremorRepository: TremorRepositoryProtocol {
         var allPoints: [TremorTimedRawPoint] = []
 
         for rawDTO in rawDTOs {
-            guard let decoded = try? rawDTO.decompressPoints() else {
+            guard let decoded = try? rawDTO.decompressPoints(),
+                  let first = decoded.first else {
                 continue
             }
 
-            allPoints.append(
-                contentsOf: decoded.map { dto in
-                    let point = TremorDataPoint(
-                        sequence: dto.sequence,
-                        sampleTickMs: dto.sampleTickMs,
-                        gyroXDps: dto.gyroXDps,
-                        gyroYDps: dto.gyroYDps,
-                        gyroZDps: dto.gyroZDps,
-                        sensorValid: dto.sensorValid,
-                        motorEnabled: dto.motorEnabled,
-                        recordedAt: dto.recordedAt
-                    )
+            let packetAnchorDate = first.recordedAt
+            var previousTick = first.sampleTickMs
+            var previousDate = packetAnchorDate
 
-                    return TremorTimedRawPoint(
-                        timestamp: dto.recordedAt,
-                        point: point
-                    )
+            for (index, dto) in decoded.enumerated() {
+                let normalizedDate: Date
+                if index == 0 {
+                    normalizedDate = packetAnchorDate
+                } else if dto.sampleTickMs > previousTick {
+                    let deltaTickMs = dto.sampleTickMs - previousTick
+                    if deltaTickMs <= 500 {
+                        normalizedDate = previousDate.addingTimeInterval(Double(deltaTickMs) / 1000.0)
+                    } else {
+                        normalizedDate = previousDate.addingTimeInterval(0.01)
+                    }
+                } else {
+                    normalizedDate = previousDate.addingTimeInterval(0.01)
                 }
-            )
+
+                let point = TremorDataPoint(
+                    sequence: dto.sequence,
+                    sampleTickMs: dto.sampleTickMs,
+                    gyroXDps: dto.gyroXDps,
+                    gyroYDps: dto.gyroYDps,
+                    gyroZDps: dto.gyroZDps,
+                    sensorValid: dto.sensorValid,
+                    motorEnabled: dto.motorEnabled,
+                    recordedAt: normalizedDate
+                )
+
+                allPoints.append(TremorTimedRawPoint(timestamp: normalizedDate, point: point))
+                previousTick = dto.sampleTickMs
+                previousDate = normalizedDate
+            }
         }
 
-        return allPoints.sorted { $0.timestamp < $1.timestamp }
+        let sorted = allPoints.sorted { $0.timestamp < $1.timestamp }
+        var deduplicated: [TremorTimedRawPoint] = []
+        deduplicated.reserveCapacity(sorted.count)
+
+        for item in sorted {
+            if let last = deduplicated.last {
+                let sameTick = last.point.sampleTickMs == item.point.sampleTickMs
+                let sameSequence = last.point.sequence == item.point.sequence
+                let nearlySameTime = abs(last.timestamp.timeIntervalSince(item.timestamp)) <= 0.002
+                if sameTick && sameSequence && nearlySameTime {
+                    continue
+                }
+            }
+            deduplicated.append(item)
+        }
+
+        return deduplicated
     }
 
     /// 向後端查詢所有歷史震顫特徵分析紀錄
-    /// - Returns: 分析紀錄 DTO 清單
     func fetchAnalysisHistory() async throws -> [TremorAnalysisRecordDTO] {
         let token = try getValidToken()
         return try await apiService.fetchAnalysisHistory(token: token)
+    }
+
+    /// 批次同步即時 RMS 趨勢點
+    func syncTrendPoints(_ points: [TremorTrendPointDTO]) async throws {
+        guard !points.isEmpty else { return }
+        let token = try getValidToken()
+        let payload = TremorTrendBatchUploadRequestDTO(points: points)
+        try await apiService.uploadTrendPoints(payload, token: token)
+    }
+
+    /// 依日期區間取得 RMS 趨勢歷史
+    func fetchTrendHistory(from: Date, to: Date) async throws -> [TremorTrendPointDTO] {
+        let token = try getValidToken()
+        return try await apiService.fetchTrendHistory(from: from, to: to, token: token)
     }
 }
