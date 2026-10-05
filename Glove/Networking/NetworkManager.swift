@@ -23,16 +23,24 @@ final class NetworkManager {
             throw NetworkError.serverError(reason: "伺服器回應異常")
         }
 
-        // 全域攔截 401 Unauthorized
+        // 攔截已登入請求的 401 Unauthorized
         if httpResponse.statusCode == 401 {
-            let reason = parseServerError(from: data, defaultMessage: "登入已過期或帳號已在其他裝置登入")
-            DispatchQueue.main.async {
-                NotificationCenter.default.post(
-                    name: .didReceive401Unauthorized,
-                    object: nil,
-                    userInfo: ["message": reason]
-                )
+            let reason = parseServerError(
+                from: data,
+                defaultMessage: "登入已過期或帳號已在其他裝置登入"
+            )
+
+            // 只有帶 JWT 的請求才代表既有登入狀態失效
+            if urlRequest.value(forHTTPHeaderField: "Authorization") != nil {
+                DispatchQueue.main.async {
+                    NotificationCenter.default.post(
+                        name: .didReceive401Unauthorized,
+                        object: nil,
+                        userInfo: ["message": reason]
+                    )
+                }
             }
+
             throw NetworkError.unauthorized
         }
 
