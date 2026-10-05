@@ -32,7 +32,7 @@ final class LoginViewModel: ObservableObject {
     @Published var sessionExpiredMessage: String = ""
 
     private let authRepository = AuthRepository()
-    private let tremorRepository: TremorRepositoryProtocol
+    private var cancellables = Set<AnyCancellable>()
 
     /// 病患姓名計算屬性（依當前身分切換呈現對象）
     var partnerName: String {
@@ -43,31 +43,23 @@ final class LoginViewModel: ObservableObject {
         }
     }
 
-    init(tremorRepository: TremorRepositoryProtocol? = nil) {
-        self.tremorRepository =
-            tremorRepository
-            ?? TremorRepository(tokenProvider: {
-                AuthManager.shared.getToken()
-            })
+    init() {
+        NotificationCenter.default
+            .publisher(for: .didReceive401Unauthorized)
+            .sink { [weak self] notification in
+                let message =
+                    notification.userInfo?["message"] as? String
+                    ?? "您的帳號已在其他裝置登入，或登入已過期，請重新登入。"
 
-        // 全域監聽 401 登出通知
-        NotificationCenter.default.addObserver(
-            forName: .didReceive401Unauthorized,
-            object: nil,
-            queue: .main
-        ) { [weak self] notification in
-            guard let strongSelf = self else { return }
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
 
-            AppLog.debug("收到 401 Unauthorized，自動執行登出機制...")
-            let message = notification.userInfo?["message"] as? String
-                ?? "您的帳號已在其他裝置登入，或登入已過期，請重新登入。"
-
-            Task { @MainActor in
-                strongSelf.handleUnauthorizedLogout(message: message)
+                    AppLog.debug("收到 401 Unauthorized，自動執行登出機制...")
+                    self.handleUnauthorizedLogout(message: message)
+                }
             }
-        }
+            .store(in: &cancellables)
     }
-
     /// 載入與確認連動夥伴資料
     func loadPartnerIfNeeded() async {
         guard let role = userData?.role else { return }
@@ -94,7 +86,6 @@ final class LoginViewModel: ObservableObject {
     /// 處理 401 憑證失效或重複登入之登出邏輯
     private func handleUnauthorizedLogout(message: String) {
         self.logout()
-        self.isAuthenticated = false
         self.sessionExpiredMessage = message
         self.showSessionExpiredAlert = true
     }
@@ -121,6 +112,11 @@ final class LoginViewModel: ObservableObject {
     func login(email: String, password: String, modelContext: ModelContext) async {
         isLoading = true
         loginError = ""
+
+        self.userData = nil
+        self.boundPartner = nil
+        self.boundCaregivers = []
+        self.isLinked = false
 
         do {
             let loginAccount = Account(email: email, password: password)

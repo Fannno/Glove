@@ -1,9 +1,8 @@
 import SwiftUI
-import Combine
 
 struct RootView: View {
     @StateObject private var loginVM = LoginViewModel()
-    @StateObject private var dataVM = DataViewModel()
+    @StateObject private var dataVM = DataViewModel.shared
     @StateObject private var medVM = MedicationViewModel()
     @ObservedObject private var bleVM = BluetoothViewModel.shared
     @StateObject private var symptomVM = SymptomViewModel()
@@ -96,15 +95,6 @@ struct RootView: View {
                     showWhatsNewSheet = false
                 }
             )
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .didReceive401Unauthorized)) { notification in
-            let message = notification.userInfo?["message"] as? String
-                ?? "您的帳號已在其他裝置登入，請重新登入。"
-            loginVM.objectWillChange.send()
-            loginVM.logout()
-            loginVM.isAuthenticated = false
-            loginVM.sessionExpiredMessage = message
-            loginVM.showSessionExpiredAlert = true
         }
     }
 
