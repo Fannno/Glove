@@ -12,6 +12,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- 支援 App 啟動時使用有效 JWT 自動恢復登入狀態，24 小時有效期限內無需重新輸入帳號密碼。
+
 ### Fixed
 
 - 統一震顫資料使用的 `DataViewModel` 實例，避免 BLE Pipeline 與畫面使用不同資料來源。
